@@ -65,13 +65,32 @@ async function readJsonResponse(res, label) {
   }
 }
 
+// 공통: edits FormData 의 기본 파라미터 채우기
+function appendEditParams(fd, settings, prompt, format, background) {
+  fd.append('model', settings.model || 'gpt-image-2')
+  fd.append('prompt', prompt)
+  fd.append('n', String(settings.n))
+  if (settings.size) fd.append('size', settings.size)
+  if (settings.quality) fd.append('quality', settings.quality)
+  if (background) fd.append('background', background)
+  fd.append('output_format', format)
+  if (format === 'jpeg' || format === 'webp') fd.append('output_compression', String(settings.compression))
+}
+
 // 직접 모드 호출 → OpenAI 응답의 data 배열 반환
-async function callDirect({ apiKey, settings, prompt, references, format, background }) {
+async function callDirect({ apiKey, settings, prompt, references, maskEdit, format, background }) {
   const useEdit = references && references.length > 0
   let res
   let json
   try {
-    if (useEdit) {
+    if (maskEdit) {
+      // 부분 편집(인페인팅): 원본 + 마스크
+      const fd = new FormData()
+      appendEditParams(fd, settings, prompt, format, background)
+      fd.append('image', maskEdit.baseBlob, 'base.png')
+      fd.append('mask', maskEdit.maskBlob, 'mask.png')
+      res = await fetch(OPENAI_EDIT, { method: 'POST', headers: { Authorization: 'Bearer ' + apiKey }, body: fd })
+    } else if (useEdit) {
       const fd = new FormData()
       fd.append('model', settings.model || 'gpt-image-2')
       fd.append('prompt', prompt)
@@ -116,18 +135,20 @@ async function callDirect({ apiKey, settings, prompt, references, format, backgr
 }
 
 // 프록시 모드 호출 → 자체 서버에 JSON 전달(참조 이미지는 data URL 로)
-async function callProxy({ settings, prompt, references, format, background }) {
+async function callProxy({ settings, prompt, references, maskEdit, format, background }) {
   let res
   let json
+  const payload = { settings: { ...settings, format, background }, prompt }
+  if (maskEdit) {
+    payload.maskEdit = { image: maskEdit.baseDataUrl, mask: maskEdit.maskDataUrl }
+  } else {
+    payload.images = (references || []).map((r) => r.dataUrl)
+  }
   try {
     res = await fetch(API_BASE + '/images', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        settings: { ...settings, format, background },
-        prompt,
-        images: (references || []).map((r) => r.dataUrl),
-      }),
+      body: JSON.stringify(payload),
     })
   } catch (e) {
     throw new Error('서버에 연결하지 못했습니다. 백엔드가 실행 중인지 확인해 주세요.')
@@ -139,7 +160,7 @@ async function callProxy({ settings, prompt, references, format, background }) {
 
 // 팀 모드: 참조 이미지를 Storage 에 올려 서명 URL 로 전달 → 함수가 OpenAI 호출 후
 // 결과를 Storage 에 저장하고 row 를 반환 → 클라이언트는 서명 URL 을 붙여 표시.
-async function callTeam({ settings, prompt, references, format, background }) {
+async function callTeam({ settings, prompt, references, maskEdit, format, background }) {
   const {
     data: { session },
   } = await supabase.auth.getSession()
@@ -147,30 +168,39 @@ async function callTeam({ settings, prompt, references, format, background }) {
   const userId = session.user.id
 
   const tempPaths = []
-  try {
-    // 1) 참조 이미지 업로드 → 서명 URL
-    const uploadedRefs = await Promise.all((references || []).map(async (r) => {
-      const ext = ((r.type && r.type.split('/')[1]) || 'png').replace('jpeg', 'jpg')
-      const path = `${userId}/tmp-${uid()}.${ext}`
-      const { error: upErr } = await supabase.storage
-        .from(UPLOADS_BUCKET)
-        .upload(path, r.blob, { contentType: r.type || 'image/png', upsert: false })
-      if (upErr) throw new Error('참조 이미지 업로드 실패: ' + upErr.message)
-      tempPaths.push(path)
-      const { data: signed, error: signErr } = await supabase.storage.from(UPLOADS_BUCKET).createSignedUrl(path, 600)
-      if (signErr || !signed) throw new Error('참조 이미지 URL 생성 실패')
-      return { url: signed.signedUrl, path }
-    }))
-    const imageUrls = uploadedRefs.map((ref) => ref.url)
+  const uploadTemp = async (blob, type) => {
+    const ext = ((type && type.split('/')[1]) || 'png').replace('jpeg', 'jpg')
+    const path = `${userId}/tmp-${uid()}.${ext}`
+    const { error: upErr } = await supabase.storage.from(UPLOADS_BUCKET).upload(path, blob, { contentType: type || 'image/png', upsert: false })
+    if (upErr) throw new Error('이미지 업로드 실패: ' + upErr.message)
+    tempPaths.push(path)
+    const { data: signed, error: signErr } = await supabase.storage.from(UPLOADS_BUCKET).createSignedUrl(path, 600)
+    if (signErr || !signed) throw new Error('이미지 URL 생성 실패')
+    return signed.signedUrl
+  }
 
-    // 2) 서버리스 함수 호출
+  try {
+    const payload = { settings: { ...settings, format, background }, prompt }
+    if (maskEdit) {
+      // 부분 편집: 원본 + 마스크 업로드
+      const [baseUrl, maskUrl] = await Promise.all([
+        uploadTemp(maskEdit.baseBlob, maskEdit.baseBlob.type || 'image/png'),
+        uploadTemp(maskEdit.maskBlob, 'image/png'),
+      ])
+      payload.maskEdit = { baseUrl, maskUrl }
+    } else {
+      const imageUrls = await Promise.all((references || []).map((r) => uploadTemp(r.blob, r.type)))
+      payload.imageUrls = imageUrls
+    }
+
+    // 서버리스 함수 호출
     let res
     let json
     try {
       res = await fetch(API_BASE + '/images', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', Authorization: 'Bearer ' + session.access_token },
-        body: JSON.stringify({ settings: { ...settings, format, background }, prompt, imageUrls }),
+        body: JSON.stringify(payload),
       })
     } catch (e) {
       throw new Error('서버에 연결하지 못했습니다. 잠시 후 다시 시도해 주세요.')
@@ -188,31 +218,34 @@ async function callTeam({ settings, prompt, references, format, background }) {
 }
 
 // 실제 생성 요청. 성공 시 결과 이미지 배열, 실패 시 throw.
-export async function generateImages({ apiKey, settings, references }) {
-  const prompt = buildPrompt(settings)
+// maskEdit 가 있으면 부분 편집(인페인팅)으로 동작.
+export async function generateImages({ apiKey, settings, references, maskEdit }) {
+  const prompt = maskEdit ? maskEdit.prompt : buildPrompt(settings)
   const { format, background } = normalizeFormat(settings)
+  // 마스크 편집은 원본 크기에 맞춤
+  const effSettings = maskEdit && maskEdit.size ? { ...settings, size: maskEdit.size } : settings
 
   // 팀 모드(Supabase) → URL 기반 아이템 반환
   if (SUPABASE_ENABLED) {
-    return callTeam({ settings, prompt, references, format, background })
+    return callTeam({ settings: effSettings, prompt, references, maskEdit, format, background })
   }
 
   // 로컬/자체 서버 모드 → base64 기반 아이템 반환
   const data =
     API_MODE === 'proxy'
-      ? await callProxy({ settings, prompt, references, format, background })
-      : await callDirect({ apiKey, settings, prompt, references, format, background })
+      ? await callProxy({ settings: effSettings, prompt, references, maskEdit, format, background })
+      : await callDirect({ apiKey, settings: effSettings, prompt, references, maskEdit, format, background })
 
   const imgs = data.map((d, i) => ({
     id: Date.now() + '-' + i,
     b64: d.b64_json,
     format,
     prompt,
-    size: settings.size,
+    size: effSettings.size,
     quality: settings.quality,
     model: settings.model,
     n: settings.n,
-    refCount: (references || []).length,
+    refCount: maskEdit ? 1 : (references || []).length,
   }))
   if (!imgs.length) throw new Error('이미지를 받지 못했습니다.')
 

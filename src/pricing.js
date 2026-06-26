@@ -17,7 +17,7 @@ export const REF_INPUT_USD = 0.015
 export const TEXT_PRICE = {
   'gpt-5.5': { in: 5.0, out: 30.0 },
   'gpt-5.5-pro': { in: 30.0, out: 180.0 },
-  'gpt-5.4-mini': { in: 0.6, out: 3.0 },
+  'gpt-5.4-mini': { in: 0.75, out: 4.5 },
 }
 
 export function textCostUsd(model, inTok, outTok) {

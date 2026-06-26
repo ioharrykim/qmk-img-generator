@@ -40,7 +40,7 @@ app.post('/api/images', async (req, res) => {
     return res.status(500).json({ error: { message: '서버에 OPENAI_API_KEY 가 설정되지 않았습니다.' } })
   }
   try {
-    const { settings = {}, prompt = '', images = [] } = req.body || {}
+    const { settings = {}, prompt = '', images = [], maskEdit = null } = req.body || {}
     let format = settings.format || 'png'
     let background = settings.background || 'opaque'
     if (background === 'transparent' && format === 'jpeg') format = 'png'
@@ -48,7 +48,21 @@ app.post('/api/images', async (req, res) => {
     const n = settings.n || 1
 
     let oaRes
-    if (images.length > 0) {
+    if (maskEdit && maskEdit.image && maskEdit.mask) {
+      // 부분 편집(인페인팅): 원본 + 마스크
+      const fd = new FormData()
+      fd.append('model', model)
+      fd.append('prompt', prompt)
+      fd.append('n', String(n))
+      if (settings.size) fd.append('size', settings.size)
+      if (settings.quality) fd.append('quality', settings.quality)
+      if (background) fd.append('background', background)
+      fd.append('output_format', format)
+      if (format === 'jpeg' || format === 'webp') fd.append('output_compression', String(settings.compression ?? 85))
+      fd.append('image', dataUrlToBlob(maskEdit.image), 'base.png')
+      fd.append('mask', dataUrlToBlob(maskEdit.mask), 'mask.png')
+      oaRes = await fetch(OPENAI_EDIT, { method: 'POST', headers: { Authorization: 'Bearer ' + KEY }, body: fd })
+    } else if (images.length > 0) {
       // 참조 이미지가 있으면 edits 엔드포인트 (multipart)
       const fd = new FormData()
       fd.append('model', model)

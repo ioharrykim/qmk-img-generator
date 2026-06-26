@@ -9,6 +9,7 @@ import ApiKeyModal from './components/ApiKeyModal'
 import Toast from './components/Toast'
 import Login from './components/Login'
 import CostBadge from './components/CostBadge'
+import MaskEditor from './components/MaskEditor'
 import { DEFAULT_SETTINGS, PERSISTED_FIELDS, STORAGE_KEYS, SIZE_DEFS } from './constants'
 import { KEY_REQUIRED, MAX_REFERENCES, SUPABASE_ENABLED } from './config'
 import { generateImages, buildPrompt } from './api'
@@ -128,6 +129,10 @@ export default function App() {
   // 큐마켓 상세페이지 모드 + AI 프롬프트 생성
   const [qmarket, setQmarket] = useState(loadQmarket)
   const [generatingPrompt, setGeneratingPrompt] = useState(false)
+
+  // 마스크 부분 편집
+  const [maskBase, setMaskBase] = useState(null) // { dataUrl, blob }
+  const [maskGenerating, setMaskGenerating] = useState(false)
 
   // 설정 저장
   useEffect(() => {
@@ -417,6 +422,79 @@ export default function App() {
     setToast({ type: 'success', message: '프롬프트를 불러왔습니다' })
   }
 
+  // 생성 결과를 화면/기록/비용에 반영 (일반 생성 + 마스크 편집 공통)
+  const commitResults = async (imgs) => {
+    setResults(imgs)
+    if (SUPABASE_ENABLED) {
+      setHistory((h) => [...imgs, ...h])
+    } else {
+      const fresh = []
+      for (const img of imgs) {
+        const blob = b64ToBlob(img.b64, img.format)
+        const rec = {
+          id: img.id,
+          blob,
+          format: img.format,
+          prompt: img.prompt,
+          size: img.size,
+          quality: img.quality,
+          model: img.model,
+          n: img.n,
+          refCount: img.refCount,
+          createdAt: Date.now(),
+        }
+        try {
+          await addHistoryItem(rec)
+        } catch (e) {
+          // 무시
+        }
+        fresh.push({ ...rec, url: URL.createObjectURL(blob) })
+      }
+      setHistory((h) => [...fresh, ...h])
+    }
+    setSessionUsd((u) => u + sumUsd(imgs))
+  }
+
+  // ── 마스크 부분 편집 ────────────────────────
+  const openMaskEditor = async (item) => {
+    try {
+      const blob = await itemToBlob(item)
+      if (!blob) return
+      const dataUrl = await blobToDataUrl(blob)
+      setMaskBase({ dataUrl, blob })
+    } catch (e) {
+      setToast({ type: 'error', message: '이미지를 불러오지 못했습니다.' })
+    }
+  }
+
+  const runMaskEdit = async ({ maskBlob, maskDataUrl, prompt, size }) => {
+    if (maskGenerating || !maskBase) return
+    if (KEY_REQUIRED && !apiKey) {
+      setShowKeyModal(true)
+      return
+    }
+    setMaskGenerating(true)
+    setToast(null)
+    try {
+      const maskEdit = {
+        prompt,
+        size,
+        baseBlob: maskBase.blob,
+        baseDataUrl: maskBase.dataUrl,
+        maskBlob,
+        maskDataUrl,
+      }
+      const imgs = await generateImages({ apiKey, settings, maskEdit })
+      await commitResults(imgs)
+      setMaskBase(null)
+      setToast({ type: 'success', message: '부분 편집 완료' })
+    } catch (e) {
+      setToast({ type: 'error', message: e.message || '부분 편집 중 오류가 발생했습니다.' })
+    } finally {
+      setMaskGenerating(false)
+    }
+  }
+
   // ── 생성 ────────────────────────────────────
   const generate = async () => {
     if (loading) return
@@ -433,37 +511,7 @@ export default function App() {
     setResults([])
     try {
       const imgs = await generateImages({ apiKey, settings, references })
-      setResults(imgs)
-      if (SUPABASE_ENABLED) {
-        // 팀 모드: 서버(함수)가 이미 저장함 → 화면 상태만 갱신
-        setHistory((h) => [...imgs, ...h])
-      } else {
-        // 로컬 모드: IndexedDB 에 저장
-        const fresh = []
-        for (const img of imgs) {
-          const blob = b64ToBlob(img.b64, img.format)
-          const rec = {
-            id: img.id,
-            blob,
-            format: img.format,
-            prompt: img.prompt,
-            size: img.size,
-            quality: img.quality,
-            model: img.model,
-            n: img.n,
-            refCount: img.refCount,
-            createdAt: Date.now(),
-          }
-          try {
-            await addHistoryItem(rec)
-          } catch (e) {
-            // 저장 실패해도 결과는 표시
-          }
-          fresh.push({ ...rec, url: URL.createObjectURL(blob) })
-        }
-        setHistory((h) => [...fresh, ...h])
-      }
-      setSessionUsd((u) => u + sumUsd(imgs))
+      await commitResults(imgs)
       setToast({ type: 'success', message: imgs.length + '장 생성 완료' })
     } catch (e) {
       setToast({ type: 'error', message: e.message || '이미지 생성 중 오류가 발생했습니다.' })
@@ -615,6 +663,7 @@ export default function App() {
             onDownload={downloadItem}
             onUseAsReference={addItemAsReference}
             onReusePrompt={reusePrompt}
+            onMaskEdit={openMaskEditor}
           />
           <HistoryStrip history={history} onExpand={setLightbox} onOpenPanel={() => setHistoryPanelOpen(true)} />
         </main>
@@ -631,7 +680,12 @@ export default function App() {
         onClear={clearHistory}
         onReuse={reuseItem}
         onUseAsReference={addItemAsReference}
+        onMaskEdit={openMaskEditor}
       />
+
+      {maskBase && (
+        <MaskEditor base={maskBase} generating={maskGenerating} onClose={() => setMaskBase(null)} onSubmit={runMaskEdit} />
+      )}
 
       <Toast toast={toast} onClose={() => setToast(null)} />
       <Lightbox item={lightbox} onClose={() => setLightbox(null)} onDownload={downloadItem} />

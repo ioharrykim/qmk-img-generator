@@ -83,17 +83,33 @@ export default async function handler(req, res) {
   let send = null
 
   try {
-    const { settings = {}, prompt = '', imageUrls = [] } = req.body || {}
+    const { settings = {}, prompt = '', imageUrls = [], maskEdit = null } = req.body || {}
     let format = settings.format || 'png'
     let background = settings.background || 'opaque'
     if (background === 'transparent' && format === 'jpeg') format = 'png'
     const model = settings.model || 'gpt-image-2'
     const n = settings.n || 1
+    const refCount = maskEdit && maskEdit.baseUrl ? 1 : imageUrls.length
     send = startJsonHeartbeat(res)
 
     // 2) OpenAI 호출
     let oaRes
-    if (imageUrls.length > 0) {
+    if (maskEdit && maskEdit.baseUrl && maskEdit.maskUrl) {
+      // 부분 편집(인페인팅): 원본 + 마스크
+      const fd = new FormData()
+      fd.append('model', model)
+      fd.append('prompt', prompt)
+      fd.append('n', String(n))
+      if (settings.size) fd.append('size', settings.size)
+      if (settings.quality) fd.append('quality', settings.quality)
+      if (background) fd.append('background', background)
+      fd.append('output_format', format)
+      if (format === 'jpeg' || format === 'webp') fd.append('output_compression', String(settings.compression ?? 85))
+      const [baseRef, maskRef] = await Promise.all([fetchReference(maskEdit.baseUrl, 0), fetchReference(maskEdit.maskUrl, 1)])
+      fd.append('image', baseRef.blob, 'base.png')
+      fd.append('mask', maskRef.blob, 'mask.png')
+      oaRes = await fetch(OPENAI_EDIT, { method: 'POST', headers: { Authorization: 'Bearer ' + OPENAI_KEY }, body: fd })
+    } else if (imageUrls.length > 0) {
       const fd = new FormData()
       fd.append('model', model)
       fd.append('prompt', prompt)
@@ -142,7 +158,7 @@ export default async function handler(req, res) {
         format,
         model,
         n,
-        ref_count: imageUrls.length,
+        ref_count: refCount,
         storage_path,
       }
       const { error: insErr } = await admin.from('generations').insert(row)

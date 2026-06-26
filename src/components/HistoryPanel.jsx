@@ -2,7 +2,7 @@ import { timeAgo } from '../utils'
 import { recordUsd, usdToKrw, formatKrw } from '../pricing'
 
 // 생성 기록 관리 패널 (우측 슬라이드오버)
-export default function HistoryPanel({ open, onClose, history, krwRate, onExpand, onDownload, onDelete, onClear, onReuse, onUseAsReference }) {
+export default function HistoryPanel({ open, onClose, history, krwRate, onExpand, onDownload, onDelete, onClear, onReuse, onUseAsReference, onMaskEdit }) {
   if (!open) return null
   return (
     <div
@@ -78,6 +78,7 @@ export default function HistoryPanel({ open, onClose, history, krwRate, onExpand
                     </div>
                     <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6, marginTop: 'auto' }}>
                       <HistoryAction label="다운로드" onClick={() => onDownload(item)} />
+                      <HistoryAction label="🖌 부분 편집" onClick={() => onMaskEdit(item)} />
                       <HistoryAction label="설정 재사용" onClick={() => onReuse(item)} />
                       <HistoryAction label="참조로 추가" onClick={() => onUseAsReference(item)} />
                       <HistoryAction label="삭제" danger onClick={() => onDelete(item)} />
