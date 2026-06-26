@@ -10,6 +10,7 @@ import Toast from './components/Toast'
 import Login from './components/Login'
 import CostBadge from './components/CostBadge'
 import MaskEditor from './components/MaskEditor'
+import PasswordModal from './components/PasswordModal'
 import { DEFAULT_SETTINGS, PERSISTED_FIELDS, STORAGE_KEYS, SIZE_DEFS } from './constants'
 import { KEY_REQUIRED, MAX_REFERENCES, SUPABASE_ENABLED } from './config'
 import { generateImages, buildPrompt } from './api'
@@ -166,6 +167,8 @@ export default function App() {
   // 마스크 부분 편집
   const [maskBase, setMaskBase] = useState(null) // { dataUrl, blob }
   const [maskGenerating, setMaskGenerating] = useState(false)
+  const [passwordModalOpen, setPasswordModalOpen] = useState(false)
+  const [passwordPrompt, setPasswordPrompt] = useState(false)
 
   // 설정 저장
   useEffect(() => {
@@ -245,6 +248,21 @@ export default function App() {
     const { data: sub } = supabase.auth.onAuthStateChange((_event, s) => setSession(s))
     return () => sub.subscription.unsubscribe()
   }, [])
+
+  useEffect(() => {
+    if (!SUPABASE_ENABLED || !session) return
+    const key = `qimg.passwordPromptSeen.${session.user.id}`
+    let seen = false
+    try {
+      seen = localStorage.getItem(key) === '1'
+    } catch (e) {
+      seen = true
+    }
+    if (!seen) {
+      setPasswordPrompt(true)
+      setPasswordModalOpen(true)
+    }
+  }, [session])
 
   // 히스토리 로드 (모드별 백엔드)
   useEffect(() => {
@@ -652,6 +670,35 @@ export default function App() {
     setHistory([])
     setResults([])
     setReferences([])
+    setPasswordModalOpen(false)
+    setPasswordPrompt(false)
+  }
+
+  const markPasswordPromptSeen = () => {
+    if (!session) return
+    try {
+      localStorage.setItem(`qimg.passwordPromptSeen.${session.user.id}`, '1')
+    } catch (e) {
+      // 무시
+    }
+  }
+
+  const openPasswordModal = () => {
+    setPasswordPrompt(false)
+    setPasswordModalOpen(true)
+  }
+
+  const closePasswordModal = () => {
+    if (passwordPrompt) markPasswordPromptSeen()
+    setPasswordModalOpen(false)
+    setPasswordPrompt(false)
+  }
+
+  const onPasswordChanged = () => {
+    markPasswordPromptSeen()
+    setPasswordModalOpen(false)
+    setPasswordPrompt(false)
+    setToast({ type: 'success', message: '비밀번호가 변경되었습니다.' })
   }
 
   const finalPrompt = buildPrompt(settings)
@@ -686,6 +733,7 @@ export default function App() {
         onOpenKeyModal={openKeyModal}
         teamMode={SUPABASE_ENABLED}
         userEmail={session ? session.user.email : ''}
+        onChangePassword={openPasswordModal}
         onLogout={logout}
         costSlot={
           <CostBadge
@@ -765,6 +813,13 @@ export default function App() {
       {maskBase && (
         <MaskEditor base={maskBase} generating={maskGenerating} onClose={() => setMaskBase(null)} onSubmit={runMaskEdit} />
       )}
+
+      <PasswordModal
+        open={passwordModalOpen}
+        prompt={passwordPrompt}
+        onClose={closePasswordModal}
+        onSuccess={onPasswordChanged}
+      />
 
       <Toast toast={toast} onClose={() => setToast(null)} />
       <Lightbox item={lightbox} onClose={() => setLightbox(null)} onDownload={downloadItem} />

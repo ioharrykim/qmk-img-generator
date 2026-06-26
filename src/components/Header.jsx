@@ -2,7 +2,7 @@
 // teamMode: 사용자 이메일 + 로그아웃 표시
 // keyRequired=false (자체 프록시 서버 모드): "서버 모드" 표시
 // keyRequired=true (직접 모드): 키 상태 + API 키 설정
-export default function Header({ hasKey, keyRequired = true, onOpenKeyModal, teamMode = false, userEmail = '', onLogout, costSlot = null }) {
+export default function Header({ hasKey, keyRequired = true, onOpenKeyModal, teamMode = false, userEmail = '', onChangePassword, onLogout, costSlot = null }) {
   return (
     <header
       className="app-header"
@@ -56,6 +56,23 @@ export default function Header({ hasKey, keyRequired = true, onOpenKeyModal, tea
             <span style={{ fontSize: 13, fontWeight: 500, color: '#6a6a6a', maxWidth: 220, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
               {userEmail}
             </span>
+            <button
+              onClick={onChangePassword}
+              className="q-hover-fog"
+              style={{
+                background: 'transparent',
+                border: '1px solid #dddddd',
+                borderRadius: 8,
+                padding: '9px 12px',
+                fontSize: 13,
+                fontWeight: 600,
+                color: '#222222',
+                cursor: 'pointer',
+                transition: 'background .15s ease',
+              }}
+            >
+              비밀번호 변경
+            </button>
             <button
               onClick={onLogout}
               className="q-hover-fog"
