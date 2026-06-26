@@ -10,7 +10,6 @@ import Toast from './components/Toast'
 import Login from './components/Login'
 import CostBadge from './components/CostBadge'
 import MaskEditor from './components/MaskEditor'
-import TypographyPanel from './components/TypographyPanel'
 import { DEFAULT_SETTINGS, PERSISTED_FIELDS, STORAGE_KEYS, SIZE_DEFS } from './constants'
 import { KEY_REQUIRED, MAX_REFERENCES, SUPABASE_ENABLED } from './config'
 import { generateImages, buildPrompt } from './api'
@@ -95,7 +94,14 @@ function loadQmarket() {
 function loadTypography() {
   try {
     const raw = localStorage.getItem(STORAGE_KEYS.typography)
-    if (raw) return { ...DEFAULT_TYPOGRAPHY, ...(JSON.parse(raw) || {}) }
+    if (raw) {
+      const saved = JSON.parse(raw) || {}
+      const loaded = { ...DEFAULT_TYPOGRAPHY, ...saved }
+      if (!Object.prototype.hasOwnProperty.call(saved, 'emphasisLines') && saved.emphasis && saved.emphasis !== 'equal') {
+        loaded.emphasisLines = [saved.emphasis]
+      }
+      return loaded
+    }
   } catch (e) {
     // 무시
   }

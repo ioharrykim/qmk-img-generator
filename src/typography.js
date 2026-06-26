@@ -6,7 +6,7 @@ export const DEFAULT_TYPOGRAPHY = {
   line1: '',
   line2: '',
   line3: '',
-  emphasis: 'equal', // 'equal' | 'line1' | 'line2' | 'line3'
+  emphasisLines: [],
   colorDesign: '',
   background: '',
   count: 4,
@@ -31,13 +31,19 @@ export function sizeForCount(count) {
   return COUNT_SIZE[count] || COUNT_SIZE[4]
 }
 
-// 현재 입력된 줄을 기준으로 강조 선택지를 만든다 (동등 + 채워진 줄들)
-export function emphasisOptions(t) {
-  const opts = [{ value: 'equal', label: '동등하게' }]
-  ;['line1', 'line2', 'line3'].forEach((key, i) => {
-    if ((t[key] || '').trim()) opts.push({ value: key, label: `${i + 1}번째 줄 강조` })
-  })
-  return opts
+export const TYPO_LINE_KEYS = ['line1', 'line2', 'line3']
+
+export function normalizeEmphasisLines(t) {
+  if (Array.isArray(t.emphasisLines)) {
+    return TYPO_LINE_KEYS.filter((key) => t.emphasisLines.includes(key))
+  }
+
+  // 이전 버전 localStorage 호환: emphasis: 'line1' | 'line2' | 'line3' | 'equal'
+  if (t.emphasis && t.emphasis !== 'equal' && TYPO_LINE_KEYS.includes(t.emphasis)) {
+    return [t.emphasis]
+  }
+
+  return []
 }
 
 export function buildTypographyPrompt(t) {
@@ -49,11 +55,17 @@ export function buildTypographyPrompt(t) {
   const background = (t.background || '').trim() || '흰색'
 
   const emMap = { line1: t.line1, line2: t.line2, line3: t.line3 }
-  const emLine = (emMap[t.emphasis] || '').trim()
+  const emphasized = normalizeEmphasisLines(t)
+    .map((key) => (emMap[key] || '').trim())
+    .filter(Boolean)
   const emphasis =
-    t.emphasis && t.emphasis !== 'equal' && emLine
-      ? `위 타이포그래피에서 "${emLine}"를 더 크게 하고 포인트를 준`
-      : '위 타이포그래피를 균형 있게 배치하고 포인트를 준'
+    emphasized.length === 1
+      ? `위 타이포그래피에서 "${emphasized[0]}"를 더 크게 하고 포인트를 준`
+      : emphasized.length > 1 && emphasized.length === lines.length
+        ? '위 타이포그래피의 모든 문구를 각각 크게 강조하고 줄별 포인트를 준'
+        : emphasized.length > 1
+          ? `위 타이포그래피에서 ${emphasized.map((line) => `"${line}"`).join(', ')}를 더 크게 하고 포인트를 준`
+          : '위 타이포그래피를 균형 있게 배치하고 포인트를 준'
 
   const colorLine = colorDesign
     ? `메인 색상과 디자인은 ${colorDesign}에 걸맞게 사용해줘. 트렌디하고 미감 좋은 타이포그래피 시안들로 만들어줘.`

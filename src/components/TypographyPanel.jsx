@@ -1,13 +1,18 @@
 import SegmentedControl from './SegmentedControl'
-import { buildTypographyPrompt, emphasisOptions, TYPO_COUNT_OPTIONS, sizeForCount } from '../typography'
+import { buildTypographyPrompt, normalizeEmphasisLines, TYPO_COUNT_OPTIONS, sizeForCount } from '../typography'
 
 // 타이포그래피 제작 전용 모드 — AI 없이 입력값을 프롬프트로 조립
 export default function TypographyPanel({ typography = {}, onToggle, onChange, onApply }) {
   const on = !!typography.enabled
-  const emOpts = emphasisOptions(typography)
-  // 강조 선택지가 사라진 경우 안전 처리
-  const emValue = emOpts.some((o) => o.value === typography.emphasis) ? typography.emphasis : 'equal'
+  const emphasisLines = normalizeEmphasisLines(typography)
   const preview = buildTypographyPrompt(typography)
+
+  const toggleEmphasis = (key) => {
+    const next = emphasisLines.includes(key)
+      ? emphasisLines.filter((line) => line !== key)
+      : [...emphasisLines, key]
+    onChange({ emphasisLines: next })
+  }
 
   return (
     <section
@@ -41,16 +46,35 @@ export default function TypographyPanel({ typography = {}, onToggle, onChange, o
         <div style={{ padding: '4px 16px 16px', display: 'flex', flexDirection: 'column', gap: 14 }}>
           <div>
             <label style={{ fontSize: 12, fontWeight: 600, color: '#6a6a6a', display: 'block', marginBottom: 6 }}>문구 (줄별 입력)</label>
-            <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
-              <input className="q-field" value={typography.line1 || ''} onChange={(e) => onChange({ line1: e.target.value })} placeholder="1번째 줄  예) 딱 지금만 이 가격에!" style={inputStyle} />
-              <input className="q-field" value={typography.line2 || ''} onChange={(e) => onChange({ line2: e.target.value })} placeholder="2번째 줄 (선택)  예) 오늘의 마감 특가" style={inputStyle} />
-              <input className="q-field" value={typography.line3 || ''} onChange={(e) => onChange({ line3: e.target.value })} placeholder="3번째 줄 (선택)" style={inputStyle} />
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+              <LineInput
+                label="1번째 줄"
+                value={typography.line1 || ''}
+                placeholder="예) 딱 지금만 이 가격에!"
+                emphasized={emphasisLines.includes('line1')}
+                onChange={(value) => onChange({ line1: value })}
+                onToggle={() => toggleEmphasis('line1')}
+              />
+              <LineInput
+                label="2번째 줄"
+                value={typography.line2 || ''}
+                placeholder="선택  예) 오늘의 마감 특가"
+                emphasized={emphasisLines.includes('line2')}
+                onChange={(value) => onChange({ line2: value })}
+                onToggle={() => toggleEmphasis('line2')}
+              />
+              <LineInput
+                label="3번째 줄"
+                value={typography.line3 || ''}
+                placeholder="선택"
+                emphasized={emphasisLines.includes('line3')}
+                onChange={(value) => onChange({ line3: value })}
+                onToggle={() => toggleEmphasis('line3')}
+              />
             </div>
-          </div>
-
-          <div>
-            <label style={{ fontSize: 12, fontWeight: 600, color: '#6a6a6a', display: 'block', marginBottom: 6 }}>강조 <span style={{ fontWeight: 400 }}>· 어떤 줄을 더 크게</span></label>
-            <SegmentedControl options={emOpts} value={emValue} onChange={(v) => onChange({ emphasis: v })} size="sm" />
+            <div style={{ fontSize: 11, color: '#6a6a6a', marginTop: 8, lineHeight: 1.5 }}>
+              크게 보여줄 줄의 <b style={{ color: '#222' }}>강조</b> 버튼을 직접 켜세요. 여러 줄을 동시에 선택할 수 있습니다.
+            </div>
           </div>
 
           <Field label="메인 색상·디자인 느낌">
@@ -111,6 +135,38 @@ const inputStyle = {
   fontSize: 13,
   color: '#222222',
   background: '#ffffff',
+}
+
+function LineInput({ label, value, placeholder, emphasized, onChange, onToggle }) {
+  return (
+    <div style={{ display: 'grid', gridTemplateColumns: '1fr 74px', gap: 8, alignItems: 'center' }}>
+      <input
+        className="q-field"
+        value={value}
+        onChange={(e) => onChange(e.target.value)}
+        placeholder={`${label}  ${placeholder}`}
+        style={inputStyle}
+      />
+      <button
+        type="button"
+        onClick={onToggle}
+        title={`${label} 강조`}
+        style={{
+          height: 40,
+          borderRadius: 10,
+          border: '1px solid ' + (emphasized ? '#2563eb' : '#dddddd'),
+          background: emphasized ? '#2563eb' : '#ffffff',
+          color: emphasized ? '#ffffff' : '#6a6a6a',
+          fontSize: 12,
+          fontWeight: 700,
+          cursor: 'pointer',
+          transition: 'all .15s ease',
+        }}
+      >
+        강조
+      </button>
+    </div>
+  )
 }
 
 function Field({ label, children }) {
