@@ -14,6 +14,33 @@ const SUPABASE_ANON = process.env.SUPABASE_ANON_KEY || process.env.VITE_SUPABASE
 const OPENAI_KEY = process.env.OPENAI_API_KEY
 const OPENAI_CHAT = 'https://api.openai.com/v1/chat/completions'
 
+function startJsonHeartbeat(res) {
+  res.writeHead(200, {
+    'Content-Type': 'application/json; charset=utf-8',
+    'Cache-Control': 'no-store',
+    'X-Content-Type-Options': 'nosniff',
+  })
+
+  const timer = setInterval(() => {
+    if (!res.writableEnded) res.write(' \n')
+  }, 10000)
+
+  return (payload) => {
+    clearInterval(timer)
+    if (!res.writableEnded) res.end(JSON.stringify(payload))
+  }
+}
+
+async function readJson(response) {
+  const text = await response.text()
+  if (!text) return {}
+  try {
+    return JSON.parse(text)
+  } catch (e) {
+    return { error: { message: `OpenAI 응답을 해석하지 못했습니다. (${response.status})` } }
+  }
+}
+
 export default async function handler(req, res) {
   if (req.method !== 'POST') {
     return res.status(405).json({ error: { message: 'POST 만 허용됩니다.' } })
@@ -33,23 +60,31 @@ export default async function handler(req, res) {
   } = await authClient.auth.getUser(token)
   if (userErr || !user) return res.status(401).json({ error: { message: '인증에 실패했습니다.' } })
 
+  let send = null
   try {
     const { model = 'gpt-5.5', messages = [] } = req.body || {}
     if (!Array.isArray(messages) || !messages.length) {
       return res.status(400).json({ error: { message: 'messages 가 필요합니다.' } })
     }
 
+    send = startJsonHeartbeat(res)
     const oaRes = await fetch(OPENAI_CHAT, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json', Authorization: 'Bearer ' + OPENAI_KEY },
       body: JSON.stringify({ model, messages }),
     })
-    const json = await oaRes.json()
-    if (!oaRes.ok) return res.status(oaRes.status).json(json)
+    const json = await readJson(oaRes)
+    if (!oaRes.ok) return send(json)
 
     const text = (json.choices && json.choices[0] && json.choices[0].message && json.choices[0].message.content) || ''
-    return res.status(200).json({ text, usage: json.usage || null })
+    return send({ text, usage: json.usage || null })
   } catch (e) {
-    return res.status(500).json({ error: { message: e.message || '프롬프트 생성 중 오류가 발생했습니다.' } })
+    if (send) {
+      return send({ error: { message: e.message || '프롬프트 생성 중 오류가 발생했습니다.' } })
+    }
+    if (!res.headersSent) {
+      return res.status(500).json({ error: { message: e.message || '프롬프트 생성 중 오류가 발생했습니다.' } })
+    }
+    return res.end(JSON.stringify({ error: { message: e.message || '프롬프트 생성 중 오류가 발생했습니다.' } }))
   }
 }

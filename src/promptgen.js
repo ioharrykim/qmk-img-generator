@@ -10,6 +10,17 @@ import { buildQmarketMessages } from './qmarketPrompts'
 
 const OPENAI_CHAT = 'https://api.openai.com/v1/chat/completions'
 
+async function readJsonResponse(res, label) {
+  const text = await res.text()
+  if (!text) return {}
+  try {
+    return JSON.parse(text)
+  } catch (e) {
+    const snippet = text.replace(/\s+/g, ' ').trim().slice(0, 180)
+    throw new Error(`${label} 응답을 해석하지 못했습니다. (${res.status}${res.statusText ? ' ' + res.statusText : ''})${snippet ? ': ' + snippet : ''}`)
+  }
+}
+
 export async function generateDetailPrompt({ apiKey, model, version, brief }) {
   const messages = buildQmarketMessages({ version, brief })
   const useModel = model || 'gpt-5.5'
@@ -31,11 +42,11 @@ export async function generateDetailPrompt({ apiKey, model, version, brief }) {
         headers,
         body: JSON.stringify({ model: useModel, messages }),
       })
-      json = await res.json()
     } catch (e) {
       throw new Error('서버에 연결하지 못했습니다.')
     }
-    if (!res.ok) throw new Error((json && json.error && json.error.message) || '프롬프트 생성 실패 (' + res.status + ')')
+    json = await readJsonResponse(res, '서버')
+    if (!res.ok || json.error) throw new Error((json && json.error && json.error.message) || '프롬프트 생성 실패 (' + res.status + ')')
     return { text: (json.text || '').trim(), usage: json.usage, model: useModel }
   }
 
@@ -49,11 +60,11 @@ export async function generateDetailPrompt({ apiKey, model, version, brief }) {
       headers: { 'Content-Type': 'application/json', Authorization: 'Bearer ' + apiKey },
       body: JSON.stringify({ model: useModel, messages }),
     })
-    json = await res.json()
   } catch (e) {
     throw new Error('네트워크 오류 또는 API 키 권한 문제일 수 있습니다.')
   }
-  if (!res.ok) throw new Error((json && json.error && json.error.message) || '프롬프트 생성 실패 (' + res.status + ')')
+  json = await readJsonResponse(res, 'OpenAI')
+  if (!res.ok || json.error) throw new Error((json && json.error && json.error.message) || '프롬프트 생성 실패 (' + res.status + ')')
   const text = (json.choices && json.choices[0] && json.choices[0].message && json.choices[0].message.content) || ''
   return { text: text.trim(), usage: json.usage, model: useModel }
 }

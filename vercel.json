@@ -2,10 +2,10 @@
   "$schema": "https://openapi.vercel.sh/vercel.json",
   "functions": {
     "api/images.js": {
-      "maxDuration": 60
+      "maxDuration": "max"
     },
     "api/prompt.js": {
-      "maxDuration": 60
+      "maxDuration": "max"
     }
   }
 }

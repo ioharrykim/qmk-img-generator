@@ -54,6 +54,17 @@ function parseError(res, json) {
   return new Error((json && json.error && json.error.message) || '요청 실패 (' + res.status + ')')
 }
 
+async function readJsonResponse(res, label) {
+  const text = await res.text()
+  if (!text) return {}
+  try {
+    return JSON.parse(text)
+  } catch (e) {
+    const snippet = text.replace(/\s+/g, ' ').trim().slice(0, 180)
+    throw new Error(`${label} 응답을 해석하지 못했습니다. (${res.status}${res.statusText ? ' ' + res.statusText : ''})${snippet ? ': ' + snippet : ''}`)
+  }
+}
+
 // 직접 모드 호출 → OpenAI 응답의 data 배열 반환
 async function callDirect({ apiKey, settings, prompt, references, format, background }) {
   const useEdit = references && references.length > 0
@@ -96,11 +107,11 @@ async function callDirect({ apiKey, settings, prompt, references, format, backgr
         body: JSON.stringify(body),
       })
     }
-    json = await res.json()
   } catch (e) {
     throw new Error('네트워크 오류 또는 API 키 권한 문제일 수 있습니다. 키와 결제 설정을 확인해 주세요.')
   }
-  if (!res.ok) throw parseError(res, json)
+  json = await readJsonResponse(res, 'OpenAI')
+  if (!res.ok || json.error) throw parseError(res, json)
   return json.data || []
 }
 
@@ -118,11 +129,11 @@ async function callProxy({ settings, prompt, references, format, background }) {
         images: (references || []).map((r) => r.dataUrl),
       }),
     })
-    json = await res.json()
   } catch (e) {
     throw new Error('서버에 연결하지 못했습니다. 백엔드가 실행 중인지 확인해 주세요.')
   }
-  if (!res.ok) throw parseError(res, json)
+  json = await readJsonResponse(res, '서버')
+  if (!res.ok || json.error) throw parseError(res, json)
   return json.data || []
 }
 
@@ -135,43 +146,45 @@ async function callTeam({ settings, prompt, references, format, background }) {
   if (!session) throw new Error('로그인이 필요합니다.')
   const userId = session.user.id
 
-  // 1) 참조 이미지 업로드 → 서명 URL
-  const imageUrls = []
   const tempPaths = []
-  for (const r of references || []) {
-    const ext = ((r.type && r.type.split('/')[1]) || 'png').replace('jpeg', 'jpg')
-    const path = `${userId}/tmp-${uid()}.${ext}`
-    const { error: upErr } = await supabase.storage
-      .from(UPLOADS_BUCKET)
-      .upload(path, r.blob, { contentType: r.type || 'image/png', upsert: false })
-    if (upErr) throw new Error('참조 이미지 업로드 실패: ' + upErr.message)
-    const { data: signed } = await supabase.storage.from(UPLOADS_BUCKET).createSignedUrl(path, 600)
-    imageUrls.push(signed.signedUrl)
-    tempPaths.push(path)
-  }
-
-  // 2) 서버리스 함수 호출
-  let res
-  let json
   try {
-    res = await fetch(API_BASE + '/images', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json', Authorization: 'Bearer ' + session.access_token },
-      body: JSON.stringify({ settings: { ...settings, format, background }, prompt, imageUrls }),
-    })
-    json = await res.json()
-  } catch (e) {
-    throw new Error('서버에 연결하지 못했습니다. 잠시 후 다시 시도해 주세요.')
+    // 1) 참조 이미지 업로드 → 서명 URL
+    const uploadedRefs = await Promise.all((references || []).map(async (r) => {
+      const ext = ((r.type && r.type.split('/')[1]) || 'png').replace('jpeg', 'jpg')
+      const path = `${userId}/tmp-${uid()}.${ext}`
+      const { error: upErr } = await supabase.storage
+        .from(UPLOADS_BUCKET)
+        .upload(path, r.blob, { contentType: r.type || 'image/png', upsert: false })
+      if (upErr) throw new Error('참조 이미지 업로드 실패: ' + upErr.message)
+      tempPaths.push(path)
+      const { data: signed, error: signErr } = await supabase.storage.from(UPLOADS_BUCKET).createSignedUrl(path, 600)
+      if (signErr || !signed) throw new Error('참조 이미지 URL 생성 실패')
+      return { url: signed.signedUrl, path }
+    }))
+    const imageUrls = uploadedRefs.map((ref) => ref.url)
+
+    // 2) 서버리스 함수 호출
+    let res
+    let json
+    try {
+      res = await fetch(API_BASE + '/images', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', Authorization: 'Bearer ' + session.access_token },
+        body: JSON.stringify({ settings: { ...settings, format, background }, prompt, imageUrls }),
+      })
+    } catch (e) {
+      throw new Error('서버에 연결하지 못했습니다. 잠시 후 다시 시도해 주세요.')
+    }
+    json = await readJsonResponse(res, '서버')
+    if (!res.ok || json.error) throw parseError(res, json)
+
+    const items = await decorateNew(json.items || [])
+    if (!items.length) throw new Error('이미지를 받지 못했습니다.')
+    return items
   } finally {
     // 임시 참조 파일 정리(베스트 에포트)
     if (tempPaths.length) supabase.storage.from(UPLOADS_BUCKET).remove(tempPaths).catch(() => {})
   }
-
-  if (!res.ok) throw parseError(res, json)
-
-  const items = await decorateNew(json.items || [])
-  if (!items.length) throw new Error('이미지를 받지 못했습니다.')
-  return items
 }
 
 // 실제 생성 요청. 성공 시 결과 이미지 배열, 실패 시 throw.

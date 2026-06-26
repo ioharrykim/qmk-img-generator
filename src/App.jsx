@@ -19,6 +19,35 @@ import * as historyStore from './history'
 import { addHistoryItem } from './db'
 import { b64ToBlob, blobToDataUrl, downloadBlob, uid } from './utils'
 
+async function optimizeReferenceFile(file) {
+  if (!file || !file.type || !file.type.startsWith('image/')) return file
+  try {
+    const bitmap = await createImageBitmap(file)
+    const maxEdge = 1536
+    const scale = Math.min(1, maxEdge / Math.max(bitmap.width, bitmap.height))
+    if (scale === 1 && file.size <= 1_500_000) {
+      bitmap.close && bitmap.close()
+      return file
+    }
+
+    const canvas = document.createElement('canvas')
+    canvas.width = Math.max(1, Math.round(bitmap.width * scale))
+    canvas.height = Math.max(1, Math.round(bitmap.height * scale))
+    const ctx = canvas.getContext('2d')
+    ctx.fillStyle = '#ffffff'
+    ctx.fillRect(0, 0, canvas.width, canvas.height)
+    ctx.drawImage(bitmap, 0, 0, canvas.width, canvas.height)
+    bitmap.close && bitmap.close()
+
+    const blob = await new Promise((resolve) => canvas.toBlob(resolve, 'image/jpeg', 0.86))
+    if (!blob || blob.size >= file.size) return file
+    const baseName = (file.name || 'reference').replace(/\.[^.]+$/, '')
+    return new File([blob], baseName + '.jpg', { type: 'image/jpeg' })
+  } catch (e) {
+    return file
+  }
+}
+
 function loadSettings() {
   let loaded = {}
   try {
@@ -223,8 +252,9 @@ export default function App() {
     const entries = []
     for (const f of list) {
       try {
-        const dataUrl = await blobToDataUrl(f)
-        entries.push({ id: uid(), name: f.name || 'image.png', blob: f, dataUrl, type: f.type })
+        const optimized = await optimizeReferenceFile(f)
+        const dataUrl = await blobToDataUrl(optimized)
+        entries.push({ id: uid(), name: optimized.name || 'image.jpg', blob: optimized, dataUrl, type: optimized.type })
       } catch (e) {
         // 한 장 실패는 건너뜀
       }

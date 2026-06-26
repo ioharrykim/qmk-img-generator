@@ -23,6 +23,42 @@ const BUCKET = process.env.STORAGE_BUCKET || 'generations'
 const OPENAI_GEN = 'https://api.openai.com/v1/images/generations'
 const OPENAI_EDIT = 'https://api.openai.com/v1/images/edits'
 
+function startJsonHeartbeat(res) {
+  res.writeHead(200, {
+    'Content-Type': 'application/json; charset=utf-8',
+    'Cache-Control': 'no-store',
+    'X-Content-Type-Options': 'nosniff',
+  })
+
+  const timer = setInterval(() => {
+    if (!res.writableEnded) res.write(' \n')
+  }, 10000)
+
+  return (payload) => {
+    clearInterval(timer)
+    if (!res.writableEnded) res.end(JSON.stringify(payload))
+  }
+}
+
+async function jsonFromOpenAI(response) {
+  const text = await response.text()
+  if (!text) return {}
+  try {
+    return JSON.parse(text)
+  } catch (e) {
+    return { error: { message: `OpenAI 응답을 해석하지 못했습니다. (${response.status})` } }
+  }
+}
+
+async function fetchReference(url, i) {
+  const r = await fetch(url)
+  if (!r.ok) throw new Error('참조 이미지를 불러오지 못했습니다.')
+  const ab = await r.arrayBuffer()
+  const type = r.headers.get('content-type') || 'image/png'
+  const ext = (type.split('/')[1] || 'png').replace('jpeg', 'jpg')
+  return { blob: new Blob([Buffer.from(ab)], { type }), name: 'ref' + i + '.' + ext }
+}
+
 export default async function handler(req, res) {
   if (req.method !== 'POST') {
     return res.status(405).json({ error: { message: 'POST 만 허용됩니다.' } })
@@ -44,6 +80,7 @@ export default async function handler(req, res) {
   if (userErr || !user) return res.status(401).json({ error: { message: '인증에 실패했습니다. 다시 로그인해 주세요.' } })
 
   const admin = createClient(SUPABASE_URL, SERVICE_ROLE)
+  let send = null
 
   try {
     const { settings = {}, prompt = '', imageUrls = [] } = req.body || {}
@@ -52,6 +89,7 @@ export default async function handler(req, res) {
     if (background === 'transparent' && format === 'jpeg') format = 'png'
     const model = settings.model || 'gpt-image-2'
     const n = settings.n || 1
+    send = startJsonHeartbeat(res)
 
     // 2) OpenAI 호출
     let oaRes
@@ -66,14 +104,8 @@ export default async function handler(req, res) {
       fd.append('output_format', format)
       if (format === 'jpeg' || format === 'webp') fd.append('output_compression', String(settings.compression ?? 85))
       const field = imageUrls.length > 1 ? 'image[]' : 'image'
-      for (let i = 0; i < imageUrls.length; i++) {
-        const r = await fetch(imageUrls[i])
-        if (!r.ok) throw new Error('참조 이미지를 불러오지 못했습니다.')
-        const ab = await r.arrayBuffer()
-        const type = r.headers.get('content-type') || 'image/png'
-        const ext = (type.split('/')[1] || 'png').replace('jpeg', 'jpg')
-        fd.append(field, new Blob([Buffer.from(ab)], { type }), 'ref' + i + '.' + ext)
-      }
+      const refs = await Promise.all(imageUrls.map(fetchReference))
+      refs.forEach((ref) => fd.append(field, ref.blob, ref.name))
       oaRes = await fetch(OPENAI_EDIT, { method: 'POST', headers: { Authorization: 'Bearer ' + OPENAI_KEY }, body: fd })
     } else {
       const body = { model, prompt, n, size: settings.size, quality: settings.quality, background, output_format: format }
@@ -86,8 +118,8 @@ export default async function handler(req, res) {
       })
     }
 
-    const json = await oaRes.json()
-    if (!oaRes.ok) return res.status(oaRes.status).json(json)
+    const json = await jsonFromOpenAI(oaRes)
+    if (!oaRes.ok) return send(json)
 
     // 3) Storage 업로드 + generations insert
     const items = []
@@ -119,8 +151,14 @@ export default async function handler(req, res) {
       items.push({ ...row, created_at: new Date().toISOString() })
     }
 
-    return res.status(200).json({ items })
+    return send({ items })
   } catch (e) {
-    return res.status(500).json({ error: { message: e.message || '처리 중 오류가 발생했습니다.' } })
+    if (send) {
+      return send({ error: { message: e.message || '처리 중 오류가 발생했습니다.' } })
+    }
+    if (!res.headersSent) {
+      return res.status(500).json({ error: { message: e.message || '처리 중 오류가 발생했습니다.' } })
+    }
+    return res.end(JSON.stringify({ error: { message: e.message || '처리 중 오류가 발생했습니다.' } }))
   }
 }
