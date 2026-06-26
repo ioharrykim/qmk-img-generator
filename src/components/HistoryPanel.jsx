@@ -1,7 +1,8 @@
 import { timeAgo } from '../utils'
+import { recordUsd, usdToKrw, formatKrw } from '../pricing'
 
 // 생성 기록 관리 패널 (우측 슬라이드오버)
-export default function HistoryPanel({ open, onClose, history, onExpand, onDownload, onDelete, onClear, onReuse, onUseAsReference }) {
+export default function HistoryPanel({ open, onClose, history, krwRate, onExpand, onDownload, onDelete, onClear, onReuse, onUseAsReference }) {
   if (!open) return null
   return (
     <div
@@ -72,7 +73,7 @@ export default function HistoryPanel({ open, onClose, history, onExpand, onDownl
                       {item.prompt || '(프롬프트 없음)'}
                     </div>
                     <div style={{ fontSize: 11, color: '#6a6a6a' }}>
-                      {(item.size === 'auto' ? '자동' : item.size)} · {(item.format || 'png').toUpperCase()} · {timeAgo(item.createdAt)}
+                      {(item.size === 'auto' ? '자동' : item.size)} · {(item.format || 'png').toUpperCase()} · ≈ {formatKrw(usdToKrw(recordUsd(item), krwRate))} · {timeAgo(item.createdAt)}
                       {item.refCount ? ' · 참조 ' + item.refCount : ''}
                     </div>
                     <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6, marginTop: 'auto' }}>

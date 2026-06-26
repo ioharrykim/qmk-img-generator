@@ -17,6 +17,7 @@ export const STORAGE_KEYS = {
   settings: 'qimg.settings',
   apiKey: 'qimg.apiKey',
   presets: 'qimg.presets',
+  krwRate: 'qimg.krwRate',
 }
 
 export const DEFAULT_SETTINGS = {

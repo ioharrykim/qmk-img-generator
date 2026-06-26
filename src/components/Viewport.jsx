@@ -1,11 +1,13 @@
 import { imgSrc, aspectFor } from '../api'
+import { recordUsd, sumUsd, usdToKrw, formatKrw } from '../pricing'
 
 // 우측 메인 뷰포트 — 빈 상태 / 로딩 스켈레톤 / 결과 그리드
-export default function Viewport({ loading, results, settings, onExpand, onDownload, onUseAsReference, onReusePrompt }) {
+export default function Viewport({ loading, results, settings, krwRate, onExpand, onDownload, onUseAsReference, onReusePrompt }) {
   const hasResults = !loading && results.length > 0
   const isEmpty = !loading && results.length === 0
   const gridCols = settings.n >= 2 ? 'repeat(2, 1fr)' : 'minmax(0, 560px)'
   const aspect = aspectFor(settings.size)
+  const batchKrw = formatKrw(usdToKrw(sumUsd(results), krwRate))
 
   return (
     <div style={{ flex: 1, minHeight: 0, overflowY: 'auto', padding: 32 }}>
@@ -80,7 +82,7 @@ export default function Viewport({ loading, results, settings, onExpand, onDownl
             <div style={{ fontSize: 22, fontWeight: 600, letterSpacing: '-0.2px' }}>생성 결과</div>
             <div style={{ fontSize: 13, color: '#6a6a6a' }}>
               {results.length}장 · {settings.size === 'auto' ? '자동 크기' : settings.size} ·{' '}
-              {settings.format.toUpperCase()}
+              {settings.format.toUpperCase()} · 이번 ≈ {batchKrw}
             </div>
           </div>
           <div style={{ display: 'grid', gridTemplateColumns: gridCols, gap: 16 }}>
@@ -116,6 +118,9 @@ export default function Viewport({ loading, results, settings, onExpand, onDownl
                       ↓
                     </button>
                   </div>
+                </div>
+                <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 6 }}>
+                  <span style={{ fontSize: 11, color: '#6a6a6a' }}>≈ {formatKrw(usdToKrw(recordUsd(item), krwRate))} / 장</span>
                 </div>
                 <div style={{ display: 'flex', gap: 6 }}>
                   <CardAction label="참조로 추가" onClick={() => onUseAsReference(item)} />

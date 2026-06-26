@@ -196,6 +196,7 @@ export async function generateImages({ apiKey, settings, references }) {
     format,
     prompt,
     size: settings.size,
+    quality: settings.quality,
     model: settings.model,
     n: settings.n,
     refCount: (references || []).length,

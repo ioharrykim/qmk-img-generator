@@ -8,9 +8,11 @@ import Lightbox from './components/Lightbox'
 import ApiKeyModal from './components/ApiKeyModal'
 import Toast from './components/Toast'
 import Login from './components/Login'
+import CostBadge from './components/CostBadge'
 import { DEFAULT_SETTINGS, PERSISTED_FIELDS, STORAGE_KEYS, SIZE_DEFS } from './constants'
 import { KEY_REQUIRED, MAX_REFERENCES, SUPABASE_ENABLED } from './config'
 import { generateImages, buildPrompt } from './api'
+import { sumUsd, fetchKrwRate, DEFAULT_KRW_RATE } from './pricing'
 import { supabase } from './supabase'
 import * as historyStore from './history'
 import { addHistoryItem } from './db'
@@ -45,6 +47,19 @@ function loadPresets() {
   }
 }
 
+function loadKrwRate() {
+  try {
+    const raw = localStorage.getItem(STORAGE_KEYS.krwRate)
+    if (raw) {
+      const obj = JSON.parse(raw)
+      if (obj && obj.rate > 0) return obj // { rate, manual }
+    }
+  } catch (e) {
+    // 무시
+  }
+  return { rate: DEFAULT_KRW_RATE, manual: false }
+}
+
 export default function App() {
   const [settings, setSettings] = useState(loadSettings)
   const [apiKey, setApiKey] = useState(loadApiKey)
@@ -63,6 +78,10 @@ export default function App() {
   // 팀 모드 인증 세션
   const [session, setSession] = useState(null)
   const [authReady, setAuthReady] = useState(!SUPABASE_ENABLED)
+
+  // 비용 추산: 환율 + 이번 세션 누적 USD
+  const [krw, setKrw] = useState(loadKrwRate) // { rate, manual }
+  const [sessionUsd, setSessionUsd] = useState(0)
 
   // 설정 저장
   useEffect(() => {
@@ -85,6 +104,34 @@ export default function App() {
       // 무시
     }
   }, [savedPresets])
+
+  // 환율 저장
+  useEffect(() => {
+    try {
+      localStorage.setItem(STORAGE_KEYS.krwRate, JSON.stringify(krw))
+    } catch (e) {
+      // 무시
+    }
+  }, [krw])
+
+  // 실시간 환율 조회 (수동 지정이 아니면 1회)
+  useEffect(() => {
+    if (krw.manual) return
+    let cancelled = false
+    fetchKrwRate().then((rate) => {
+      if (!cancelled && rate) setKrw((cur) => (cur.manual ? cur : { rate, manual: false }))
+    })
+    return () => {
+      cancelled = true
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [])
+
+  const setRateManual = (rate) => setKrw({ rate, manual: true })
+  const refreshRate = async () => {
+    const rate = await fetchKrwRate()
+    if (rate) setKrw({ rate, manual: false })
+  }
 
   // 인증 상태 구독 (팀 모드)
   useEffect(() => {
@@ -305,6 +352,7 @@ export default function App() {
             format: img.format,
             prompt: img.prompt,
             size: img.size,
+            quality: img.quality,
             model: img.model,
             n: img.n,
             refCount: img.refCount,
@@ -319,6 +367,7 @@ export default function App() {
         }
         setHistory((h) => [...fresh, ...h])
       }
+      setSessionUsd((u) => u + sumUsd(imgs))
       setToast({ type: 'success', message: imgs.length + '장 생성 완료' })
     } catch (e) {
       setToast({ type: 'error', message: e.message || '이미지 생성 중 오류가 발생했습니다.' })
@@ -420,6 +469,15 @@ export default function App() {
         teamMode={SUPABASE_ENABLED}
         userEmail={session ? session.user.email : ''}
         onLogout={logout}
+        costSlot={
+          <CostBadge
+            history={history}
+            krwRate={krw.rate}
+            sessionUsd={sessionUsd}
+            onRateChange={setRateManual}
+            onRefreshRate={refreshRate}
+          />
+        }
       />
 
       <div style={{ flex: 1, minHeight: 0, display: 'flex' }}>
@@ -451,6 +509,7 @@ export default function App() {
             loading={loading}
             results={results}
             settings={settings}
+            krwRate={krw.rate}
             onExpand={setLightbox}
             onDownload={downloadItem}
             onUseAsReference={addItemAsReference}
@@ -464,6 +523,7 @@ export default function App() {
         open={historyPanelOpen}
         onClose={() => setHistoryPanelOpen(false)}
         history={history}
+        krwRate={krw.rate}
         onExpand={setLightbox}
         onDownload={downloadItem}
         onDelete={removeHistory}

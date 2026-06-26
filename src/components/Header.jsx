@@ -2,7 +2,7 @@
 // teamMode: 사용자 이메일 + 로그아웃 표시
 // keyRequired=false (자체 프록시 서버 모드): "서버 모드" 표시
 // keyRequired=true (직접 모드): 키 상태 + API 키 설정
-export default function Header({ hasKey, keyRequired = true, onOpenKeyModal, teamMode = false, userEmail = '', onLogout }) {
+export default function Header({ hasKey, keyRequired = true, onOpenKeyModal, teamMode = false, userEmail = '', onLogout, costSlot = null }) {
   return (
     <header
       style={{
@@ -52,6 +52,7 @@ export default function Header({ hasKey, keyRequired = true, onOpenKeyModal, tea
         </div>
       </div>
       <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+        {costSlot}
         {teamMode ? (
           <>
             <span style={{ fontSize: 13, fontWeight: 500, color: '#6a6a6a', maxWidth: 220, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>

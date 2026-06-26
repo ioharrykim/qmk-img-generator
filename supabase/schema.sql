@@ -7,6 +7,7 @@ create table if not exists public.generations (
   user_id uuid not null references auth.users (id) on delete cascade,
   prompt text,
   size text,
+  quality text,
   format text,
   model text,
   n int,
@@ -14,6 +15,9 @@ create table if not exists public.generations (
   storage_path text not null,
   created_at timestamptz not null default now()
 );
+
+-- 이미 배포된 테이블이 있다면(비용 추산 기능 추가 시) 아래 한 줄만 실행:
+alter table public.generations add column if not exists quality text;
 
 create index if not exists generations_user_created_idx
   on public.generations (user_id, created_at desc);

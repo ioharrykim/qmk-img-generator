@@ -24,8 +24,10 @@ async function signRow(row) {
     storage_path: row.storage_path,
     prompt: row.prompt,
     size: row.size,
+    quality: row.quality,
     format: row.format,
     model: row.model,
+    n: row.n,
     refCount: row.ref_count,
     createdAt: new Date(row.created_at).getTime(),
   }

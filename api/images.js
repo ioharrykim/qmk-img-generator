@@ -106,6 +106,7 @@ export default async function handler(req, res) {
         user_id: user.id,
         prompt,
         size: settings.size || null,
+        quality: settings.quality || null,
         format,
         model,
         n,
