@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import Header from './components/Header'
 import ControlPanel from './components/ControlPanel'
 import Viewport from './components/Viewport'
@@ -15,7 +15,7 @@ import { KEY_REQUIRED, MAX_REFERENCES, SUPABASE_ENABLED } from './config'
 import { generateImages, buildPrompt } from './api'
 import { generateDetailPrompt } from './promptgen'
 import { buildTypographyPrompt, DEFAULT_TYPOGRAPHY, sizeForCount } from './typography'
-import { sumUsd, textCostUsd, fetchKrwRate, DEFAULT_KRW_RATE } from './pricing'
+import { sumUsd, textCostUsd, fetchKrwRate, DEFAULT_KRW_RATE, estimateGenerationCost } from './pricing'
 import { supabase } from './supabase'
 import * as historyStore from './history'
 import { addHistoryItem } from './db'
@@ -47,6 +47,18 @@ async function optimizeReferenceFile(file) {
     return new File([blob], baseName + '.jpg', { type: 'image/jpeg' })
   } catch (e) {
     return file
+  }
+}
+
+async function measureImageBlob(blob) {
+  if (!blob || !blob.type || !blob.type.startsWith('image/')) return {}
+  try {
+    const bitmap = await createImageBitmap(blob)
+    const dims = { width: bitmap.width, height: bitmap.height }
+    bitmap.close && bitmap.close()
+    return dims
+  } catch (e) {
+    return {}
   }
 }
 
@@ -288,8 +300,9 @@ export default function App() {
     for (const f of list) {
       try {
         const optimized = await optimizeReferenceFile(f)
+        const dims = await measureImageBlob(optimized)
         const dataUrl = await blobToDataUrl(optimized)
-        entries.push({ id: uid(), name: optimized.name || 'image.jpg', blob: optimized, dataUrl, type: optimized.type })
+        entries.push({ id: uid(), name: optimized.name || 'image.jpg', blob: optimized, dataUrl, type: optimized.type, ...dims })
       } catch (e) {
         // 한 장 실패는 건너뜀
       }
@@ -328,12 +341,13 @@ export default function App() {
     } catch (e) {
       return
     }
+    const dims = await measureImageBlob(blob)
     setReferences((prev) => {
       if (prev.length >= MAX_REFERENCES) {
         setToast({ type: 'error', message: `참조 이미지는 최대 ${MAX_REFERENCES}장입니다.` })
         return prev
       }
-      return [...prev, { id: uid(), name: 'ref-' + item.id + '.' + item.format, blob, dataUrl, type: blob.type }]
+      return [...prev, { id: uid(), name: 'ref-' + item.id + '.' + item.format, blob, dataUrl, type: blob.type, ...dims }]
     })
     setToast({ type: 'success', message: '참조 이미지에 추가됨' })
   }
@@ -640,7 +654,12 @@ export default function App() {
     setReferences([])
   }
 
-  const finalPromptPreview = buildPrompt(settings) || '(프롬프트를 입력하면 여기에 표시됩니다)'
+  const finalPrompt = buildPrompt(settings)
+  const finalPromptPreview = finalPrompt || '(프롬프트를 입력하면 여기에 표시됩니다)'
+  const generationEstimate = useMemo(
+    () => estimateGenerationCost({ settings, prompt: finalPrompt, references, krwRate: krw.rate }),
+    [settings, finalPrompt, references, krw.rate]
+  )
 
   // 팀 모드 게이트
   if (SUPABASE_ENABLED && !authReady) {
@@ -693,6 +712,7 @@ export default function App() {
           advancedOpen={advancedOpen}
           onToggleAdvanced={() => setAdvancedOpen((v) => !v)}
           finalPromptPreview={finalPromptPreview}
+          generationEstimate={generationEstimate}
           references={references}
           onAddReferences={addReferences}
           onRemoveReference={removeReference}

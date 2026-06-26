@@ -12,6 +12,7 @@ import { STYLES } from './constants'
 import { API_MODE, API_BASE, SUPABASE_ENABLED, STORAGE_BUCKET, UPLOADS_BUCKET } from './config'
 import { supabase } from './supabase'
 import { decorateNew } from './history'
+import { referencesInputUsd } from './pricing'
 import { uid } from './utils'
 
 const OPENAI_GEN = 'https://api.openai.com/v1/images/generations'
@@ -227,7 +228,9 @@ export async function generateImages({ apiKey, settings, references, maskEdit })
 
   // 팀 모드(Supabase) → URL 기반 아이템 반환
   if (SUPABASE_ENABLED) {
-    return callTeam({ settings: effSettings, prompt, references, maskEdit, format, background })
+    const items = await callTeam({ settings: effSettings, prompt, references, maskEdit, format, background })
+    const refInputUsd = maskEdit ? undefined : referencesInputUsd(references)
+    return items.map((item) => ({ ...item, refInputUsd }))
   }
 
   // 로컬/자체 서버 모드 → base64 기반 아이템 반환
@@ -246,6 +249,7 @@ export async function generateImages({ apiKey, settings, references, maskEdit })
     model: settings.model,
     n: settings.n,
     refCount: maskEdit ? 1 : (references || []).length,
+    refInputUsd: maskEdit ? undefined : referencesInputUsd(references),
   }))
   if (!imgs.length) throw new Error('이미지를 받지 못했습니다.')
 

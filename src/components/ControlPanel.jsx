@@ -3,6 +3,7 @@ import ReferenceImages from './ReferenceImages'
 import StylePresets from './StylePresets'
 import QmarketDetailPanel from './QmarketDetailPanel'
 import TypographyPanel from './TypographyPanel'
+import { formatKrw, formatUsd } from '../pricing'
 import {
   USECASES,
   SIZE_DEFS,
@@ -49,10 +50,22 @@ export default function ControlPanel({
   onToggleTypography,
   onTypographyChange,
   onApplyTypography,
+  generationEstimate,
 }) {
   const showCompression = settings.format === 'jpeg' || settings.format === 'webp'
   const canGenerate = !keyRequired || hasKey
   const refMode = references.length > 0
+  const showEstimate = !!generationEstimate && !loading
+  const estimateLine = generationEstimate
+    ? `이번 클릭 약 ${formatKrw(generationEstimate.krw)} · ${generationEstimate.hasPrompt ? generationEstimate.mood : '프롬프트만 오면 출발'}`
+    : ''
+  const estimateTitle = generationEstimate
+    ? [
+        `출력 ${formatUsd(generationEstimate.outputUsd)}`,
+        `프롬프트 ${formatUsd(generationEstimate.promptUsd)}`,
+        `참조 이미지 ${formatUsd(generationEstimate.refUsd)}`,
+      ].join(' + ')
+    : undefined
   const generateLabel = loading
     ? '생성 중…'
     : !canGenerate
@@ -397,12 +410,13 @@ export default function ControlPanel({
           onClick={onGenerate}
           disabled={loading}
           className="q-generate"
+          title={estimateTitle}
           style={{
             width: '100%',
-            height: 52,
+            minHeight: showEstimate ? 66 : 52,
             border: 'none',
             borderRadius: 14,
-            background: loading ? '#ffb38f' : '#ff4800',
+            background: loading ? '#ffb38f' : 'linear-gradient(135deg, #ff4800 0%, #e94305 58%, #ff6b2d 100%)',
             color: '#ffffff',
             fontSize: 15,
             fontWeight: 700,
@@ -413,6 +427,7 @@ export default function ControlPanel({
             gap: 10,
             transition: 'background .15s ease',
             boxShadow: loading ? 'none' : 'rgba(255,72,0,0.35) 0px 6px 18px',
+            padding: '8px 14px',
           }}
         >
           {loading && (
@@ -428,7 +443,28 @@ export default function ControlPanel({
               }}
             />
           )}
-          {generateLabel}
+          <span style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 5, lineHeight: 1.1, minWidth: 0 }}>
+            <span>{generateLabel}</span>
+            {showEstimate && (
+              <span
+                style={{
+                  maxWidth: '100%',
+                  overflow: 'hidden',
+                  textOverflow: 'ellipsis',
+                  whiteSpace: 'nowrap',
+                  padding: '4px 9px',
+                  borderRadius: 999,
+                  background: 'rgba(255,255,255,0.17)',
+                  border: '1px solid rgba(255,255,255,0.22)',
+                  color: 'rgba(255,255,255,0.9)',
+                  fontSize: 11,
+                  fontWeight: 650,
+                }}
+              >
+                {estimateLine}
+              </span>
+            )}
+          </span>
         </button>
       </div>
     </aside>
