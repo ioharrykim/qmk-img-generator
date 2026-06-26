@@ -15,7 +15,32 @@ body {
     BlinkMacSystemFont, sans-serif;
   -webkit-font-smoothing: antialiased;
   color: #222222;
-  letter-spacing: -0.13px;
+}
+
+.brand-name-short {
+  display: none;
+}
+
+@media (max-width: 760px) {
+  .app-header {
+    padding: 0 14px !important;
+  }
+
+  .brand-lockup {
+    gap: 8px !important;
+  }
+
+  .brand-name-full {
+    display: none;
+  }
+
+  .brand-name-short {
+    display: inline;
+  }
+
+  .brand-badge {
+    display: none;
+  }
 }
 
 ::-webkit-scrollbar {

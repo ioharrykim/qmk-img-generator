@@ -47,24 +47,22 @@ export default function Login() {
         }}
       >
         <div style={{ display: 'flex', alignItems: 'center', gap: 11, marginBottom: 22 }}>
-          <div
+          <img
+            src="/qmarket-app-symbol.svg"
+            alt=""
             style={{
               width: 36,
               height: 36,
               borderRadius: 10,
-              background: '#ff4800',
-              display: 'flex',
-              alignItems: 'center',
-              justifyContent: 'center',
-              color: '#fff',
-              fontWeight: 700,
-              fontSize: 20,
-              boxShadow: 'rgba(255,72,0,0.28) 0px 4px 12px',
+              display: 'block',
+              boxShadow: 'rgba(255,72,0,0.18) 0px 4px 12px',
+              flex: 'none',
             }}
-          >
-            Q
+          />
+          <div style={{ minWidth: 0 }}>
+            <div className="brand-name-full" style={{ fontSize: 19, fontWeight: 700 }}>마케팅챕터 이미지 스튜디오</div>
+            <div className="brand-name-short" style={{ fontSize: 19, fontWeight: 700 }}>AWM-Studio</div>
           </div>
-          <div style={{ fontSize: 19, fontWeight: 700, letterSpacing: '-0.4px' }}>큐이미지 스튜디오</div>
         </div>
 
         {status === 'sent' ? (

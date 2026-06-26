@@ -1,4 +1,4 @@
-// 큐이미지 스튜디오 — 프록시/정적 서버
+// 마케팅챕터 이미지 스튜디오 — 프록시/정적 서버
 //
 // 역할:
 //  1) 빌드된 프론트엔드(dist/)를 정적 서빙
@@ -131,6 +131,6 @@ app.get('*', (req, res) => res.sendFile(path.join(dist, 'index.html')))
 
 const port = process.env.PORT || 3000
 app.listen(port, () => {
-  console.log('큐이미지 스튜디오 서버: http://localhost:' + port)
+  console.log('마케팅챕터 이미지 스튜디오 서버: http://localhost:' + port)
   if (!KEY) console.warn('⚠ OPENAI_API_KEY 가 설정되지 않았습니다. 생성 요청이 실패합니다.')
 })

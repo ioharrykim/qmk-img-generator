@@ -1,4 +1,4 @@
-# 큐이미지 스튜디오
+# 마케팅챕터 이미지 스튜디오
 
 `gpt-image-2` 기반 **큐마켓 이미지 생성기**. Claude Design 으로 만든 UI 시안(`design-source/`)을 동작하는 Vite + React 앱으로 옮기고 고도화한 것입니다.
 

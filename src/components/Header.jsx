@@ -5,6 +5,7 @@
 export default function Header({ hasKey, keyRequired = true, onOpenKeyModal, teamMode = false, userEmail = '', onLogout, costSlot = null }) {
   return (
     <header
+      className="app-header"
       style={{
         height: 64,
         flex: 'none',
@@ -16,27 +17,24 @@ export default function Header({ hasKey, keyRequired = true, onOpenKeyModal, tea
         padding: '0 24px',
       }}
     >
-      <div style={{ display: 'flex', alignItems: 'center', gap: 11 }}>
-        <div
+      <div className="brand-lockup" style={{ display: 'flex', alignItems: 'center', gap: 11, minWidth: 0 }}>
+        <img
+          src="/qmarket-app-symbol.svg"
+          alt=""
           style={{
             width: 30,
             height: 30,
             borderRadius: 8,
-            background: '#ff4800',
-            display: 'flex',
-            alignItems: 'center',
-            justifyContent: 'center',
-            color: '#ffffff',
-            fontWeight: 700,
-            fontSize: 18,
-            boxShadow: 'rgba(255,72,0,0.28) 0px 4px 12px',
+            display: 'block',
+            boxShadow: 'rgba(255,72,0,0.18) 0px 4px 12px',
+            flex: 'none',
           }}
-        >
-          Q
-        </div>
-        <div style={{ display: 'flex', alignItems: 'baseline', gap: 8 }}>
-          <span style={{ fontSize: 18, fontWeight: 700, letterSpacing: '-0.4px' }}>큐이미지 스튜디오</span>
+        />
+        <div style={{ display: 'flex', alignItems: 'baseline', gap: 8, minWidth: 0 }}>
+          <span className="brand-name-full" style={{ fontSize: 18, fontWeight: 700 }}>마케팅챕터 이미지 스튜디오</span>
+          <span className="brand-name-short" style={{ fontSize: 18, fontWeight: 700 }}>AWM-Studio</span>
           <span
+            className="brand-badge"
             style={{
               fontSize: 11,
               fontWeight: 600,
