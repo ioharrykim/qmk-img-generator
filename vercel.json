@@ -3,6 +3,9 @@
   "functions": {
     "api/images.js": {
       "maxDuration": 60
+    },
+    "api/prompt.js": {
+      "maxDuration": 60
     }
   }
 }

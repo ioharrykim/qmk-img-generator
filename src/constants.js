@@ -18,6 +18,7 @@ export const STORAGE_KEYS = {
   apiKey: 'qimg.apiKey',
   presets: 'qimg.presets',
   krwRate: 'qimg.krwRate',
+  qmarket: 'qimg.qmarket',
 }
 
 export const DEFAULT_SETTINGS = {
@@ -32,6 +33,7 @@ export const DEFAULT_SETTINGS = {
   n: 1,
   moderation: 'auto',
   model: 'gpt-image-2',
+  promptModel: 'gpt-5.5',
   customW: 1024,
   customH: 1024,
   useCustomSize: false,
@@ -50,6 +52,7 @@ export const PERSISTED_FIELDS = [
   'n',
   'moderation',
   'model',
+  'promptModel',
   'customW',
   'customH',
   'useCustomSize',

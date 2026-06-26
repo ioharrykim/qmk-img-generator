@@ -12,7 +12,8 @@ import CostBadge from './components/CostBadge'
 import { DEFAULT_SETTINGS, PERSISTED_FIELDS, STORAGE_KEYS, SIZE_DEFS } from './constants'
 import { KEY_REQUIRED, MAX_REFERENCES, SUPABASE_ENABLED } from './config'
 import { generateImages, buildPrompt } from './api'
-import { sumUsd, fetchKrwRate, DEFAULT_KRW_RATE } from './pricing'
+import { generateDetailPrompt } from './promptgen'
+import { sumUsd, textCostUsd, fetchKrwRate, DEFAULT_KRW_RATE } from './pricing'
 import { supabase } from './supabase'
 import * as historyStore from './history'
 import { addHistoryItem } from './db'
@@ -45,6 +46,18 @@ function loadPresets() {
   } catch (e) {
     return []
   }
+}
+
+const DEFAULT_QMARKET = { enabled: false, version: 'realistic', title: '', subtitle: '', concept: '' }
+
+function loadQmarket() {
+  try {
+    const raw = localStorage.getItem(STORAGE_KEYS.qmarket)
+    if (raw) return { ...DEFAULT_QMARKET, ...(JSON.parse(raw) || {}) }
+  } catch (e) {
+    // 무시
+  }
+  return DEFAULT_QMARKET
 }
 
 function loadKrwRate() {
@@ -83,6 +96,10 @@ export default function App() {
   const [krw, setKrw] = useState(loadKrwRate) // { rate, manual }
   const [sessionUsd, setSessionUsd] = useState(0)
 
+  // 큐마켓 상세페이지 모드 + AI 프롬프트 생성
+  const [qmarket, setQmarket] = useState(loadQmarket)
+  const [generatingPrompt, setGeneratingPrompt] = useState(false)
+
   // 설정 저장
   useEffect(() => {
     try {
@@ -113,6 +130,15 @@ export default function App() {
       // 무시
     }
   }, [krw])
+
+  // 큐마켓 모드 상태 저장
+  useEffect(() => {
+    try {
+      localStorage.setItem(STORAGE_KEYS.qmarket, JSON.stringify(qmarket))
+    } catch (e) {
+      // 무시
+    }
+  }, [qmarket])
 
   // 실시간 환율 조회 (수동 지정이 아니면 1회)
   useEffect(() => {
@@ -261,6 +287,46 @@ export default function App() {
     setToast({ type: 'success', message: '프리셋을 적용했습니다' })
   }
   const deletePreset = (id) => setSavedPresets((p) => p.filter((x) => x.id !== id))
+
+  // ── 큐마켓 상세페이지 모드 ──────────────────
+  const toggleQmarket = () => {
+    const enabled = !qmarket.enabled
+    setQmarket((q) => ({ ...q, enabled }))
+    if (enabled) update({ size: '1024x1536', useCustomSize: false }) // 2:3 권장 기본값
+  }
+
+  const onQmarketChange = (patch) => setQmarket((q) => ({ ...q, ...patch }))
+
+  const onGeneratePrompt = async () => {
+    if (generatingPrompt) return
+    if (KEY_REQUIRED && !apiKey) {
+      setShowKeyModal(true)
+      return
+    }
+    const brief = { title: qmarket.title, subtitle: qmarket.subtitle, concept: qmarket.concept }
+    if (!brief.title.trim() && !brief.concept.trim()) {
+      setToast({ type: 'error', message: '타이틀이나 컨셉을 입력해 주세요.' })
+      return
+    }
+    setGeneratingPrompt(true)
+    setToast(null)
+    try {
+      const { text, usage, model } = await generateDetailPrompt({
+        apiKey,
+        model: settings.promptModel,
+        version: qmarket.version,
+        brief,
+      })
+      if (!text) throw new Error('프롬프트를 받지 못했습니다.')
+      update({ prompt: text, styles: [] })
+      if (usage) setSessionUsd((u) => u + textCostUsd(model, usage.prompt_tokens, usage.completion_tokens))
+      setToast({ type: 'success', message: 'AI 프롬프트를 생성했어요. 아래에서 확인·수정하세요.' })
+    } catch (e) {
+      setToast({ type: 'error', message: e.message || '프롬프트 생성 중 오류가 발생했습니다.' })
+    } finally {
+      setGeneratingPrompt(false)
+    }
+  }
 
   // ── 히스토리 ────────────────────────────────
   const downloadItem = async (item) => {
@@ -502,6 +568,11 @@ export default function App() {
           onSavePreset={savePreset}
           onApplyPreset={applyPreset}
           onDeletePreset={deletePreset}
+          qmarket={qmarket}
+          onToggleQmarket={toggleQmarket}
+          onQmarketChange={onQmarketChange}
+          onGeneratePrompt={onGeneratePrompt}
+          generatingPrompt={generatingPrompt}
         />
 
         <main style={{ flex: 1, minWidth: 0, display: 'flex', flexDirection: 'column' }}>

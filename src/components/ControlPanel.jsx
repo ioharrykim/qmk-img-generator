@@ -1,6 +1,7 @@
 import SegmentedControl from './SegmentedControl'
 import ReferenceImages from './ReferenceImages'
 import StylePresets from './StylePresets'
+import QmarketDetailPanel from './QmarketDetailPanel'
 import {
   USECASES,
   SIZE_DEFS,
@@ -38,6 +39,11 @@ export default function ControlPanel({
   onSavePreset,
   onApplyPreset,
   onDeletePreset,
+  qmarket,
+  onToggleQmarket,
+  onQmarketChange,
+  onGeneratePrompt,
+  generatingPrompt,
 }) {
   const showCompression = settings.format === 'jpeg' || settings.format === 'webp'
   const canGenerate = !keyRequired || hasKey
@@ -63,6 +69,15 @@ export default function ControlPanel({
       }}
     >
       <div style={{ padding: 24, display: 'flex', flexDirection: 'column', gap: 28 }}>
+        {/* 큐마켓 상세페이지 전용 모드 */}
+        <QmarketDetailPanel
+          qmarket={qmarket}
+          onToggle={onToggleQmarket}
+          onChange={onQmarketChange}
+          onGenerate={onGeneratePrompt}
+          generating={generatingPrompt}
+        />
+
         {/* 프롬프트 */}
         <section>
           <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 10 }}>
@@ -328,12 +343,22 @@ export default function ControlPanel({
                 <SegmentedControl options={MODERATION_OPTIONS} value={settings.moderation} onChange={(v) => update({ moderation: v })} size="sm" />
               </div>
               <div>
-                <label style={{ fontSize: 12, fontWeight: 600, color: '#6a6a6a', display: 'block', marginBottom: 6 }}>모델명</label>
+                <label style={{ fontSize: 12, fontWeight: 600, color: '#6a6a6a', display: 'block', marginBottom: 6 }}>이미지 모델</label>
                 <input
                   className="q-field"
                   value={settings.model}
                   onChange={(e) => update({ model: e.target.value })}
                   placeholder="gpt-image-2"
+                  style={{ width: '100%', border: '1px solid #dddddd', borderRadius: 14, padding: '10px 13px', fontSize: 13, color: '#222222' }}
+                />
+              </div>
+              <div>
+                <label style={{ fontSize: 12, fontWeight: 600, color: '#6a6a6a', display: 'block', marginBottom: 6 }}>프롬프트 생성 모델 <span style={{ fontWeight: 400 }}>· 큐마켓 AI 프롬프트</span></label>
+                <input
+                  className="q-field"
+                  value={settings.promptModel}
+                  onChange={(e) => update({ promptModel: e.target.value })}
+                  placeholder="gpt-5.5"
                   style={{ width: '100%', border: '1px solid #dddddd', borderRadius: 14, padding: '10px 13px', fontSize: 13, color: '#222222' }}
                 />
               </div>

@@ -86,6 +86,30 @@ app.post('/api/images', async (req, res) => {
   }
 })
 
+// AI 고급 프롬프트 생성 (chat/completions 프록시)
+app.post('/api/prompt', async (req, res) => {
+  if (!KEY) {
+    return res.status(500).json({ error: { message: '서버에 OPENAI_API_KEY 가 설정되지 않았습니다.' } })
+  }
+  try {
+    const { model = 'gpt-5.5', messages = [] } = req.body || {}
+    if (!Array.isArray(messages) || !messages.length) {
+      return res.status(400).json({ error: { message: 'messages 가 필요합니다.' } })
+    }
+    const oaRes = await fetch('https://api.openai.com/v1/chat/completions', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', Authorization: 'Bearer ' + KEY },
+      body: JSON.stringify({ model, messages }),
+    })
+    const json = await oaRes.json()
+    if (!oaRes.ok) return res.status(oaRes.status).json(json)
+    const text = (json.choices && json.choices[0] && json.choices[0].message && json.choices[0].message.content) || ''
+    res.status(200).json({ text, usage: json.usage || null })
+  } catch (e) {
+    res.status(500).json({ error: { message: e.message || '프롬프트 생성 중 오류가 발생했습니다.' } })
+  }
+})
+
 // 정적 빌드 서빙 + SPA 폴백
 const dist = path.join(__dirname, '..', 'dist')
 app.use(express.static(dist))

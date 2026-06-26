@@ -13,6 +13,18 @@ export const PRICE_TABLE = {
 // 참조 이미지(편집) 1장당 입력 토큰 추정 비용(USD) — 대략치
 export const REF_INPUT_USD = 0.015
 
+// 텍스트 모델(프롬프트 생성) 단가 — USD per 1M tokens (출처: OpenAI 2026 가격표)
+export const TEXT_PRICE = {
+  'gpt-5.5': { in: 5.0, out: 30.0 },
+  'gpt-5.5-pro': { in: 30.0, out: 180.0 },
+  'gpt-5.4-mini': { in: 0.6, out: 3.0 },
+}
+
+export function textCostUsd(model, inTok, outTok) {
+  const p = TEXT_PRICE[model] || TEXT_PRICE['gpt-5.5']
+  return ((inTok || 0) * p.in + (outTok || 0) * p.out) / 1e6
+}
+
 // 환율 폴백 (실시간 조회 실패 시). 실제 값은 앱 로드 시 갱신.
 export const DEFAULT_KRW_RATE = 1380
 
