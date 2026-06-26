@@ -19,6 +19,7 @@ export const STORAGE_KEYS = {
   presets: 'qimg.presets',
   krwRate: 'qimg.krwRate',
   qmarket: 'qimg.qmarket',
+  typography: 'qimg.typography',
 }
 
 export const DEFAULT_SETTINGS = {

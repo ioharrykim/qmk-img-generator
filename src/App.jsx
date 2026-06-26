@@ -10,10 +10,12 @@ import Toast from './components/Toast'
 import Login from './components/Login'
 import CostBadge from './components/CostBadge'
 import MaskEditor from './components/MaskEditor'
+import TypographyPanel from './components/TypographyPanel'
 import { DEFAULT_SETTINGS, PERSISTED_FIELDS, STORAGE_KEYS, SIZE_DEFS } from './constants'
 import { KEY_REQUIRED, MAX_REFERENCES, SUPABASE_ENABLED } from './config'
 import { generateImages, buildPrompt } from './api'
 import { generateDetailPrompt } from './promptgen'
+import { buildTypographyPrompt, DEFAULT_TYPOGRAPHY } from './typography'
 import { sumUsd, textCostUsd, fetchKrwRate, DEFAULT_KRW_RATE } from './pricing'
 import { supabase } from './supabase'
 import * as historyStore from './history'
@@ -90,6 +92,16 @@ function loadQmarket() {
   return DEFAULT_QMARKET
 }
 
+function loadTypography() {
+  try {
+    const raw = localStorage.getItem(STORAGE_KEYS.typography)
+    if (raw) return { ...DEFAULT_TYPOGRAPHY, ...(JSON.parse(raw) || {}) }
+  } catch (e) {
+    // 무시
+  }
+  return DEFAULT_TYPOGRAPHY
+}
+
 function loadKrwRate() {
   try {
     const raw = localStorage.getItem(STORAGE_KEYS.krwRate)
@@ -129,6 +141,9 @@ export default function App() {
   // 큐마켓 상세페이지 모드 + AI 프롬프트 생성
   const [qmarket, setQmarket] = useState(loadQmarket)
   const [generatingPrompt, setGeneratingPrompt] = useState(false)
+
+  // 타이포그래피 제작 모드 (AI 미사용)
+  const [typography, setTypography] = useState(loadTypography)
 
   // 마스크 부분 편집
   const [maskBase, setMaskBase] = useState(null) // { dataUrl, blob }
@@ -173,6 +188,15 @@ export default function App() {
       // 무시
     }
   }, [qmarket])
+
+  // 타이포그래피 모드 상태 저장
+  useEffect(() => {
+    try {
+      localStorage.setItem(STORAGE_KEYS.typography, JSON.stringify(typography))
+    } catch (e) {
+      // 무시
+    }
+  }, [typography])
 
   // 실시간 환율 조회 (수동 지정이 아니면 1회)
   useEffect(() => {
@@ -361,6 +385,19 @@ export default function App() {
     } finally {
       setGeneratingPrompt(false)
     }
+  }
+
+  // ── 타이포그래피 모드 (AI 미사용) ────────────
+  const toggleTypography = () => setTypography((t) => ({ ...t, enabled: !t.enabled }))
+  const onTypographyChange = (patch) => setTypography((t) => ({ ...t, ...patch }))
+  const applyTypography = () => {
+    const p = buildTypographyPrompt(typography)
+    if (!p) {
+      setToast({ type: 'error', message: '문구를 한 줄 이상 입력해 주세요.' })
+      return
+    }
+    update({ prompt: p, styles: [] })
+    setToast({ type: 'success', message: '타이포 프롬프트를 적용했어요. 아래에서 확인·수정하세요.' })
   }
 
   // ── 히스토리 ────────────────────────────────
@@ -651,6 +688,10 @@ export default function App() {
           onQmarketChange={onQmarketChange}
           onGeneratePrompt={onGeneratePrompt}
           generatingPrompt={generatingPrompt}
+          typography={typography}
+          onToggleTypography={toggleTypography}
+          onTypographyChange={onTypographyChange}
+          onApplyTypography={applyTypography}
         />
 
         <main style={{ flex: 1, minWidth: 0, display: 'flex', flexDirection: 'column' }}>

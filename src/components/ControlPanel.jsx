@@ -2,6 +2,7 @@ import SegmentedControl from './SegmentedControl'
 import ReferenceImages from './ReferenceImages'
 import StylePresets from './StylePresets'
 import QmarketDetailPanel from './QmarketDetailPanel'
+import TypographyPanel from './TypographyPanel'
 import {
   USECASES,
   SIZE_DEFS,
@@ -44,6 +45,10 @@ export default function ControlPanel({
   onQmarketChange,
   onGeneratePrompt,
   generatingPrompt,
+  typography,
+  onToggleTypography,
+  onTypographyChange,
+  onApplyTypography,
 }) {
   const showCompression = settings.format === 'jpeg' || settings.format === 'webp'
   const canGenerate = !keyRequired || hasKey
@@ -76,6 +81,14 @@ export default function ControlPanel({
           onChange={onQmarketChange}
           onGenerate={onGeneratePrompt}
           generating={generatingPrompt}
+        />
+
+        {/* 타이포그래피 전용 모드 */}
+        <TypographyPanel
+          typography={typography}
+          onToggle={onToggleTypography}
+          onChange={onTypographyChange}
+          onApply={onApplyTypography}
         />
 
         {/* 프롬프트 */}
