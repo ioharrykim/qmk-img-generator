@@ -1,5 +1,5 @@
 import SegmentedControl from './SegmentedControl'
-import { buildTypographyPrompt, emphasisOptions, TYPO_COUNT_OPTIONS } from '../typography'
+import { buildTypographyPrompt, emphasisOptions, TYPO_COUNT_OPTIONS, sizeForCount } from '../typography'
 
 // 타이포그래피 제작 전용 모드 — AI 없이 입력값을 프롬프트로 조립
 export default function TypographyPanel({ typography = {}, onToggle, onChange, onApply }) {
@@ -64,6 +64,9 @@ export default function TypographyPanel({ typography = {}, onToggle, onChange, o
           <div>
             <label style={{ fontSize: 12, fontWeight: 600, color: '#6a6a6a', display: 'block', marginBottom: 6 }}>시안 개수 <span style={{ fontWeight: 400 }}>· 한 이미지 안 변형 수</span></label>
             <SegmentedControl options={TYPO_COUNT_OPTIONS} value={typography.count || 4} onChange={(v) => onChange({ count: v })} size="sm" />
+            <div style={{ fontSize: 11, color: '#2563eb', marginTop: 8, lineHeight: 1.5 }}>
+              📐 이미지 비율이 <b>{sizeForCount(typography.count || 4).ratio}</b> ({sizeForCount(typography.count || 4).w}×{sizeForCount(typography.count || 4).h})로 자동 설정됩니다. 아래 <b>비율/사이즈</b>에서 변경 가능.
+            </div>
           </div>
 
           {preview && (

@@ -15,7 +15,7 @@ import { DEFAULT_SETTINGS, PERSISTED_FIELDS, STORAGE_KEYS, SIZE_DEFS } from './c
 import { KEY_REQUIRED, MAX_REFERENCES, SUPABASE_ENABLED } from './config'
 import { generateImages, buildPrompt } from './api'
 import { generateDetailPrompt } from './promptgen'
-import { buildTypographyPrompt, DEFAULT_TYPOGRAPHY } from './typography'
+import { buildTypographyPrompt, DEFAULT_TYPOGRAPHY, sizeForCount } from './typography'
 import { sumUsd, textCostUsd, fetchKrwRate, DEFAULT_KRW_RATE } from './pricing'
 import { supabase } from './supabase'
 import * as historyStore from './history'
@@ -388,8 +388,20 @@ export default function App() {
   }
 
   // ── 타이포그래피 모드 (AI 미사용) ────────────
-  const toggleTypography = () => setTypography((t) => ({ ...t, enabled: !t.enabled }))
-  const onTypographyChange = (patch) => setTypography((t) => ({ ...t, ...patch }))
+  // 시안 개수에 따라 이미지 비율 자동 설정 (커스텀으로 변경 가능)
+  const applyCountSize = (count) => {
+    const { w, h } = sizeForCount(count)
+    update({ useCustomSize: true, customW: w, customH: h, size: `${w}x${h}` })
+  }
+  const toggleTypography = () => {
+    const enabled = !typography.enabled
+    setTypography((t) => ({ ...t, enabled }))
+    if (enabled) applyCountSize(typography.count)
+  }
+  const onTypographyChange = (patch) => {
+    setTypography((t) => ({ ...t, ...patch }))
+    if (patch.count != null) applyCountSize(patch.count)
+  }
   const applyTypography = () => {
     const p = buildTypographyPrompt(typography)
     if (!p) {

@@ -19,6 +19,18 @@ export const TYPO_COUNT_OPTIONS = [
   { value: 4, label: '4개' },
 ]
 
+// 시안 개수별 자동 이미지 사이즈 (gpt-image-2 커스텀 사이즈: 16배수·비율≤3:1·픽셀 65만~829만)
+export const COUNT_SIZE = {
+  1: { w: 1536, h: 1152, ratio: '4:3' }, // 단일
+  2: { w: 1792, h: 896, ratio: '2:1' }, // 가로 2분할
+  3: { w: 1024, h: 1536, ratio: '2:3' }, // 세로 3단
+  4: { w: 1792, h: 896, ratio: '2:1' }, // 2×2 (넓은 셀)
+}
+
+export function sizeForCount(count) {
+  return COUNT_SIZE[count] || COUNT_SIZE[4]
+}
+
 // 현재 입력된 줄을 기준으로 강조 선택지를 만든다 (동등 + 채워진 줄들)
 export function emphasisOptions(t) {
   const opts = [{ value: 'equal', label: '동등하게' }]
