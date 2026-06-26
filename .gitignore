@@ -1,0 +1,12 @@
+node_modules
+dist
+dist-ssr
+*.local
+.DS_Store
+.vite
+.env
+.env.local
+.claude/
+
+# 디자인 원본(zip 압축 해제물) — 참고용, 커밋 제외하려면 주석 해제
+# design-source

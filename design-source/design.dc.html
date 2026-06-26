@@ -1,0 +1,629 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/gh/wanteddev/wanted-sans@v1.0.3/packages/wanted-sans/fonts/webfonts/variable/split/WantedSansVariable.min.css">
+<style>
+  * { box-sizing: border-box; }
+  html, body { margin: 0; padding: 0; }
+  body { font-family: 'Wanted Sans Variable', 'Wanted Sans', -apple-system, BlinkMacSystemFont, sans-serif; -webkit-font-smoothing: antialiased; }
+  ::-webkit-scrollbar { width: 10px; height: 10px; }
+  ::-webkit-scrollbar-thumb { background: #dddddd; border-radius: 8px; border: 3px solid transparent; background-clip: padding-box; }
+  ::-webkit-scrollbar-thumb:hover { background: #c1c1c1; background-clip: padding-box; }
+  textarea, input, button { font-family: inherit; }
+  textarea:focus, input:focus { outline: none; }
+  @keyframes qshimmer { 0% { background-position: -460px 0; } 100% { background-position: 460px 0; } }
+  @keyframes qspin { to { transform: rotate(360deg); } }
+  @keyframes qpop { from { opacity: 0; transform: scale(.96) translateY(6px); } to { opacity: 1; transform: none; } }
+  @keyframes qfade { from { opacity: 0; } to { opacity: 1; } }
+</style>
+</helmet>
+<div style="height:100vh; display:flex; flex-direction:column; background:#f7f7f7; color:#222222; letter-spacing:-0.13px;">
+
+  <!-- HEADER -->
+  <header style="height:64px; flex:none; background:#ffffff; border-bottom:1px solid #ebebeb; display:flex; align-items:center; justify-content:space-between; padding:0 24px;">
+    <div style="display:flex; align-items:center; gap:11px;">
+      <div style="width:30px; height:30px; border-radius:8px; background:#ff4800; display:flex; align-items:center; justify-content:center; color:#ffffff; font-weight:700; font-size:18px; box-shadow: rgba(255,72,0,0.28) 0px 4px 12px;">Q</div>
+      <div style="display:flex; align-items:baseline; gap:8px;">
+        <span style="font-size:18px; font-weight:700; letter-spacing:-0.4px;">큐이미지 스튜디오</span>
+        <span style="font-size:11px; font-weight:600; color:#ff4800; background:#fff1eb; padding:3px 8px; border-radius:32px; letter-spacing:0.2px;">GPT Image</span>
+      </div>
+    </div>
+    <div style="display:flex; align-items:center; gap:8px;">
+      <span style="font-size:13px; font-weight:500; color:{{ keyStatusColor }};">{{ keyStatusLabel }}</span>
+      <button onClick="{{ openKeyModal }}" style="display:flex; align-items:center; gap:6px; background:transparent; border:1px solid #222222; border-radius:8px; padding:9px 14px; font-size:13px; font-weight:600; color:#222222; cursor:pointer; transition:background .15s ease;" style-hover="background:#f7f7f7;">API 키 설정</button>
+    </div>
+  </header>
+
+  <!-- BODY -->
+  <div style="flex:1; min-height:0; display:flex;">
+
+    <!-- CONTROL PANEL -->
+    <aside style="width:444px; flex:none; background:#ffffff; border-right:1px solid #ebebeb; overflow-y:auto; display:flex; flex-direction:column;">
+      <div style="padding:24px; display:flex; flex-direction:column; gap:28px;">
+
+        <!-- Prompt -->
+        <section>
+          <div style="display:flex; align-items:center; justify-content:space-between; margin-bottom:10px;">
+            <label style="font-size:13px; font-weight:600;">프롬프트</label>
+            <button onClick="{{ fillExample }}" style="background:transparent; border:none; font-size:12px; font-weight:600; color:#6a6a6a; cursor:pointer; padding:2px 4px;" style-hover="color:#222222;">예시 채우기</button>
+          </div>
+          <textarea value="{{ prompt }}" onInput="{{ onPromptInput }}" placeholder="만들고 싶은 이미지를 자유롭게 설명해 주세요. 예) 노을 지는 해변에서 산책하는 강아지" rows="5" style="width:100%; resize:vertical; border:1px solid #dddddd; border-radius:14px; padding:14px; font-size:14px; line-height:1.5; color:#222222; background:#ffffff;" style-focus="border-color:#ff4800; box-shadow:0 0 0 3px #ffece2;"></textarea>
+          <div style="margin-top:10px;">
+            <label style="font-size:12px; font-weight:600; color:#6a6a6a; display:block; margin-bottom:6px;">제외할 요소 (네거티브)</label>
+            <input value="{{ negative }}" onInput="{{ onNegativeInput }}" placeholder="예) 흐릿함, 텍스트, 워터마크" style="width:100%; border:1px solid #dddddd; border-radius:14px; padding:11px 14px; font-size:13px; color:#222222; background:#ffffff;" style-focus="border-color:#ff4800; box-shadow:0 0 0 3px #ffece2;" />
+          </div>
+        </section>
+
+        <!-- Style presets -->
+        <section>
+          <div style="font-size:13px; font-weight:600; margin-bottom:4px;">스타일 프리셋</div>
+          <div style="font-size:12px; color:#6a6a6a; margin-bottom:12px;">클릭해서 켜고 끄세요. 중복 적용 가능합니다.</div>
+          <div style="display:flex; flex-wrap:wrap; gap:8px;">
+            <sc-for list="{{ styleChips }}" as="opt" hint-placeholder-count="12">
+              <button onClick="{{ opt.onClick }}" style="display:flex; align-items:center; gap:6px; padding:9px 13px; border-radius:32px; font-size:13px; font-weight:600; cursor:pointer; transition:all .15s ease; border:1px solid {{ opt.border }}; background:{{ opt.bg }}; color:{{ opt.color }};">{{ opt.label }}</button>
+            </sc-for>
+          </div>
+        </section>
+
+        <!-- Use-case presets -->
+        <section>
+          <div style="font-size:13px; font-weight:600; margin-bottom:12px;">용도 프리셋 <span style="font-weight:400; color:#6a6a6a; font-size:12px;">· 사이즈·품질 한 번에</span></div>
+          <div style="display:grid; grid-template-columns:1fr 1fr; gap:8px;">
+            <sc-for list="{{ useCaseChips }}" as="opt" hint-placeholder-count="4">
+              <button onClick="{{ opt.onClick }}" style="display:flex; flex-direction:column; align-items:flex-start; gap:2px; padding:12px 14px; border-radius:14px; cursor:pointer; text-align:left; transition:all .15s ease; border:1px solid {{ opt.border }}; background:{{ opt.bg }};">
+                <span style="font-size:13px; font-weight:600; color:{{ opt.titleColor }};">{{ opt.label }}</span>
+                <span style="font-size:11px; color:#6a6a6a;">{{ opt.desc }}</span>
+              </button>
+            </sc-for>
+          </div>
+        </section>
+
+        <div style="height:1px; background:#ebebeb;"></div>
+
+        <!-- Custom: size -->
+        <section>
+          <div style="font-size:13px; font-weight:600; margin-bottom:12px;">비율 / 사이즈</div>
+          <div style="display:grid; grid-template-columns:1fr 1fr; gap:8px;">
+            <sc-for list="{{ sizeOptions }}" as="opt" hint-placeholder-count="6">
+              <button onClick="{{ opt.onClick }}" style="display:flex; align-items:center; gap:10px; padding:11px 13px; border-radius:8px; cursor:pointer; transition:all .15s ease; border:1px solid {{ opt.border }}; background:{{ opt.bg }};">
+                <span style="display:block; flex:none; background:{{ opt.swatch }}; border:1.5px solid {{ opt.swatchBorder }}; width:{{ opt.swW }}; height:{{ opt.swH }}; border-radius:3px;"></span>
+                <span style="display:flex; flex-direction:column; align-items:flex-start; line-height:1.2;">
+                  <span style="font-size:13px; font-weight:600; color:{{ opt.color }};">{{ opt.label }}</span>
+                  <span style="font-size:11px; color:#6a6a6a;">{{ opt.sub }}</span>
+                </span>
+              </button>
+            </sc-for>
+          </div>
+          <button onClick="{{ toggleCustomSize }}" style="display:flex; align-items:center; justify-content:space-between; width:100%; margin-top:8px; padding:11px 14px; border-radius:8px; cursor:pointer; transition:all .15s ease; border:1px solid {{ customBtnBorder }}; background:{{ customBtnBg }};">
+            <span style="font-size:13px; font-weight:600; color:{{ customBtnColor }};">직접 입력 (px)</span>
+            <span style="font-size:16px; font-weight:600; color:{{ customBtnColor }}; line-height:1;">{{ customCaret }}</span>
+          </button>
+          <sc-if value="{{ useCustomSize }}" hint-placeholder-val="{{ false }}">
+            <div style="display:flex; align-items:center; gap:10px; margin-top:10px;">
+              <div style="flex:1; display:flex; flex-direction:column; gap:4px;">
+                <label style="font-size:11px; font-weight:600; color:#6a6a6a;">가로</label>
+                <input type="number" min="1" value="{{ customW }}" onInput="{{ onCustomW }}" style="width:100%; border:1px solid #dddddd; border-radius:14px; padding:10px 13px; font-size:14px; color:#222222;" style-focus="border-color:#ff4800; box-shadow:0 0 0 3px #ffece2;" />
+              </div>
+              <span style="font-size:14px; color:#6a6a6a; padding-top:18px;">×</span>
+              <div style="flex:1; display:flex; flex-direction:column; gap:4px;">
+                <label style="font-size:11px; font-weight:600; color:#6a6a6a;">세로</label>
+                <input type="number" min="1" value="{{ customH }}" onInput="{{ onCustomH }}" style="width:100%; border:1px solid #dddddd; border-radius:14px; padding:10px 13px; font-size:14px; color:#222222;" style-focus="border-color:#ff4800; box-shadow:0 0 0 3px #ffece2;" />
+              </div>
+            </div>
+            <div style="font-size:11px; color:#6a6a6a; margin-top:8px; line-height:1.4;">모델이 지원하는 크기여야 정상 생성됩니다. 일반적으로 256~1792px 범위를 권장합니다.</div>
+          </sc-if>
+        </section>
+
+        <!-- Custom: quality -->
+        <section>
+          <div style="font-size:13px; font-weight:600; margin-bottom:12px;">품질</div>
+          <div style="display:flex; gap:6px; background:#f7f7f7; padding:4px; border-radius:12px;">
+            <sc-for list="{{ qualityOptions }}" as="opt" hint-placeholder-count="4">
+              <button onClick="{{ opt.onClick }}" style="flex:1; padding:9px 4px; border-radius:8px; border:none; font-size:13px; font-weight:600; cursor:pointer; transition:all .15s ease; background:{{ opt.bg }}; color:{{ opt.color }}; box-shadow:{{ opt.shadow }};">{{ opt.label }}</button>
+            </sc-for>
+          </div>
+        </section>
+
+        <!-- Custom: background -->
+        <section>
+          <div style="font-size:13px; font-weight:600; margin-bottom:12px;">배경</div>
+          <div style="display:flex; gap:6px; background:#f7f7f7; padding:4px; border-radius:12px;">
+            <sc-for list="{{ bgOptions }}" as="opt" hint-placeholder-count="3">
+              <button onClick="{{ opt.onClick }}" style="flex:1; padding:9px 4px; border-radius:8px; border:none; font-size:13px; font-weight:600; cursor:pointer; transition:all .15s ease; background:{{ opt.bg }}; color:{{ opt.color }}; box-shadow:{{ opt.shadow }};">{{ opt.label }}</button>
+            </sc-for>
+          </div>
+        </section>
+
+        <!-- Custom: format -->
+        <section>
+          <div style="font-size:13px; font-weight:600; margin-bottom:12px;">출력 형식</div>
+          <div style="display:flex; gap:6px; background:#f7f7f7; padding:4px; border-radius:12px;">
+            <sc-for list="{{ formatOptions }}" as="opt" hint-placeholder-count="3">
+              <button onClick="{{ opt.onClick }}" style="flex:1; padding:9px 4px; border-radius:8px; border:none; font-size:13px; font-weight:600; cursor:pointer; transition:all .15s ease; background:{{ opt.bg }}; color:{{ opt.color }}; box-shadow:{{ opt.shadow }}; text-transform:uppercase;">{{ opt.label }}</button>
+            </sc-for>
+          </div>
+          <sc-if value="{{ showCompression }}" hint-placeholder-val="{{ false }}">
+            <div style="margin-top:14px;">
+              <div style="display:flex; justify-content:space-between; font-size:12px; color:#6a6a6a; margin-bottom:6px;">
+                <span style="font-weight:600;">압축 품질</span>
+                <span style="font-weight:600; color:#222222;">{{ compression }}%</span>
+              </div>
+              <input type="range" min="20" max="100" step="5" value="{{ compression }}" onInput="{{ onCompressionInput }}" style="width:100%; accent-color:#ff4800;" />
+            </div>
+          </sc-if>
+        </section>
+
+        <!-- Custom: count -->
+        <section>
+          <div style="font-size:13px; font-weight:600; margin-bottom:12px;">생성 개수</div>
+          <div style="display:flex; gap:6px; background:#f7f7f7; padding:4px; border-radius:12px;">
+            <sc-for list="{{ countOptions }}" as="opt" hint-placeholder-count="4">
+              <button onClick="{{ opt.onClick }}" style="flex:1; padding:9px 4px; border-radius:8px; border:none; font-size:13px; font-weight:600; cursor:pointer; transition:all .15s ease; background:{{ opt.bg }}; color:{{ opt.color }}; box-shadow:{{ opt.shadow }};">{{ opt.label }}</button>
+            </sc-for>
+          </div>
+        </section>
+
+        <!-- Advanced -->
+        <section>
+          <button onClick="{{ toggleAdvanced }}" style="display:flex; align-items:center; justify-content:space-between; width:100%; background:transparent; border:none; cursor:pointer; padding:0;">
+            <span style="font-size:13px; font-weight:600;">고급 설정</span>
+            <span style="font-size:14px; color:#6a6a6a; transition:transform .2s ease; transform:rotate({{ advCaret }});">⌄</span>
+          </button>
+          <sc-if value="{{ advancedOpen }}" hint-placeholder-val="{{ false }}">
+            <div style="margin-top:16px; display:flex; flex-direction:column; gap:18px;">
+              <div>
+                <label style="font-size:12px; font-weight:600; color:#6a6a6a; display:block; margin-bottom:6px;">콘텐츠 필터 강도</label>
+                <div style="display:flex; gap:6px; background:#f7f7f7; padding:4px; border-radius:12px;">
+                  <sc-for list="{{ moderationOptions }}" as="opt" hint-placeholder-count="2">
+                    <button onClick="{{ opt.onClick }}" style="flex:1; padding:8px 4px; border-radius:8px; border:none; font-size:12px; font-weight:600; cursor:pointer; transition:all .15s ease; background:{{ opt.bg }}; color:{{ opt.color }}; box-shadow:{{ opt.shadow }};">{{ opt.label }}</button>
+                  </sc-for>
+                </div>
+              </div>
+              <div>
+                <label style="font-size:12px; font-weight:600; color:#6a6a6a; display:block; margin-bottom:6px;">모델명</label>
+                <input value="{{ model }}" onInput="{{ onModelInput }}" placeholder="gpt-image-2" style="width:100%; border:1px solid #dddddd; border-radius:14px; padding:10px 13px; font-size:13px; color:#222222;" style-focus="border-color:#ff4800; box-shadow:0 0 0 3px #ffece2;" />
+              </div>
+              <div style="background:#f7f7f7; border-radius:14px; padding:13px 15px;">
+                <div style="font-size:11px; font-weight:600; color:#6a6a6a; letter-spacing:0.4px; margin-bottom:6px;">최종 전송 프롬프트</div>
+                <div style="font-size:12px; line-height:1.5; color:#222222; white-space:pre-wrap; word-break:break-word;">{{ finalPromptPreview }}</div>
+              </div>
+            </div>
+          </sc-if>
+        </section>
+
+      </div>
+
+      <!-- Sticky generate -->
+      <div style="position:sticky; bottom:0; margin-top:auto; padding:16px 24px; background:#ffffff; border-top:1px solid #ebebeb;">
+        <button onClick="{{ generate }}" disabled="{{ generateDisabled }}" style="width:100%; height:52px; border:none; border-radius:14px; background:{{ generateBg }}; color:#ffffff; font-size:15px; font-weight:700; cursor:{{ generateCursor }}; display:flex; align-items:center; justify-content:center; gap:10px; transition:background .15s ease; box-shadow:{{ generateShadow }};" style-hover="filter:brightness(0.96);">
+          <sc-if value="{{ loading }}" hint-placeholder-val="{{ false }}">
+            <span style="width:18px; height:18px; border:2.5px solid rgba(255,255,255,.45); border-top-color:#ffffff; border-radius:50%; display:inline-block; animation:qspin .7s linear infinite;"></span>
+          </sc-if>
+          {{ generateLabel }}
+        </button>
+      </div>
+    </aside>
+
+    <!-- VIEWPORT -->
+    <main style="flex:1; min-width:0; display:flex; flex-direction:column;">
+      <div style="flex:1; min-height:0; overflow-y:auto; padding:32px;">
+
+        <!-- Empty state -->
+        <sc-if value="{{ isEmpty }}" hint-placeholder-val="{{ true }}">
+          <div style="height:100%; min-height:420px; display:flex; flex-direction:column; align-items:center; justify-content:center; text-align:center; color:#6a6a6a;">
+            <div style="width:88px; height:88px; border-radius:24px; background:#ffffff; box-shadow: rgba(0,0,0,0.02) 0px 0px 0px 1px, rgba(0,0,0,0.04) 0px 2px 6px 0px, rgba(0,0,0,0.1) 0px 4px 8px 0px; display:flex; align-items:center; justify-content:center; font-size:38px; margin-bottom:22px;">🎨</div>
+            <div style="font-size:22px; font-weight:600; color:#222222; letter-spacing:-0.2px; margin-bottom:8px;">이미지를 만들어 볼까요?</div>
+            <div style="font-size:14px; max-width:360px; line-height:1.5;">왼쪽에 프롬프트를 입력하고 프리셋을 고른 뒤<br>생성 버튼을 누르면 결과가 여기에 표시됩니다.</div>
+          </div>
+        </sc-if>
+
+        <!-- Loading -->
+        <sc-if value="{{ loading }}" hint-placeholder-val="{{ false }}">
+          <div>
+            <div style="font-size:14px; font-weight:600; color:#6a6a6a; margin-bottom:16px;">생성 중입니다… 보통 10~30초 정도 걸려요.</div>
+            <div style="display:grid; grid-template-columns:{{ gridCols }}; gap:16px;">
+              <sc-for list="{{ skeletonList }}" as="sk" hint-placeholder-count="1">
+                <div style="aspect-ratio:{{ aspect }}; border-radius:20px; background:linear-gradient(100deg,#ededed 30%,#f7f7f7 50%,#ededed 70%); background-size:460px 100%; animation:qshimmer 1.3s ease-in-out infinite;"></div>
+              </sc-for>
+            </div>
+          </div>
+        </sc-if>
+
+        <!-- Results -->
+        <sc-if value="{{ hasResults }}" hint-placeholder-val="{{ false }}">
+          <div style="animation:qfade .3s ease;">
+            <div style="display:flex; align-items:baseline; justify-content:space-between; margin-bottom:16px;">
+              <div style="font-size:22px; font-weight:600; letter-spacing:-0.2px;">생성 결과</div>
+              <div style="font-size:13px; color:#6a6a6a;">{{ resultMeta }}</div>
+            </div>
+            <div style="display:grid; grid-template-columns:{{ gridCols }}; gap:16px;">
+              <sc-for list="{{ resultViews }}" as="img" hint-placeholder-count="1">
+                <div style="position:relative; border-radius:20px; overflow:hidden; background:#dddddd; cursor:zoom-in; animation:qpop .35s ease both;" onClick="{{ img.onExpand }}">
+                  <img src="{{ img.src }}" alt="생성 이미지" style="display:block; width:100%; height:auto;" />
+                  <div style="position:absolute; top:10px; right:10px; display:flex; gap:6px;">
+                    <button onClick="{{ img.onDownload }}" title="다운로드" style="width:36px; height:36px; border-radius:50%; border:none; background:#ffffff; color:#222222; font-size:16px; cursor:pointer; display:flex; align-items:center; justify-content:center; box-shadow: rgba(0,0,0,0.02) 0px 0px 0px 1px, rgba(0,0,0,0.16) 0px 2px 4px 0px;">↓</button>
+                  </div>
+                </div>
+              </sc-for>
+            </div>
+          </div>
+        </sc-if>
+      </div>
+
+      <!-- History strip -->
+      <sc-if value="{{ hasHistory }}" hint-placeholder-val="{{ false }}">
+        <div style="flex:none; border-top:1px solid #ebebeb; background:#ffffff; padding:14px 32px;">
+          <div style="display:flex; align-items:center; justify-content:space-between; margin-bottom:10px;">
+            <span style="font-size:13px; font-weight:600;">생성 기록 <span style="color:#6a6a6a; font-weight:400;">{{ historyCount }}</span></span>
+            <button onClick="{{ clearHistory }}" style="background:transparent; border:none; font-size:12px; font-weight:600; color:#6a6a6a; cursor:pointer;" style-hover="color:#222222;">전체 삭제</button>
+          </div>
+          <div style="display:flex; gap:10px; overflow-x:auto; padding-bottom:4px;">
+            <sc-for list="{{ historyViews }}" as="h" hint-placeholder-count="6">
+              <img src="{{ h.src }}" onClick="{{ h.onExpand }}" alt="기록" style="flex:none; width:64px; height:64px; object-fit:cover; border-radius:14px; cursor:pointer; border:2px solid transparent; transition:border-color .15s ease;" style-hover="border-color:#ff4800;" />
+            </sc-for>
+          </div>
+        </div>
+      </sc-if>
+    </main>
+  </div>
+
+  <!-- Error toast -->
+  <sc-if value="{{ hasError }}" hint-placeholder-val="{{ false }}">
+    <div style="position:fixed; bottom:24px; left:50%; transform:translateX(-50%); z-index:60; background:#222222; color:#ffffff; padding:14px 18px; border-radius:14px; font-size:13px; font-weight:500; display:flex; align-items:center; gap:14px; max-width:560px; box-shadow:0 8px 28px rgba(0,0,0,0.25); animation:qpop .25s ease;">
+      <span style="color:#ff8a5c;">⚠</span>
+      <span style="flex:1; line-height:1.4;">{{ error }}</span>
+      <button onClick="{{ clearError }}" style="background:transparent; border:none; color:#c1c1c1; font-size:16px; cursor:pointer; line-height:1;">✕</button>
+    </div>
+  </sc-if>
+
+  <!-- Lightbox -->
+  <sc-if value="{{ lightbox }}" hint-placeholder-val="{{ false }}">
+    <div onClick="{{ closeLightbox }}" style="position:fixed; inset:0; z-index:70; background:rgba(0,0,0,0.72); display:flex; align-items:center; justify-content:center; padding:40px; animation:qfade .2s ease; backdrop-filter:blur(8px);">
+      <div onClick="{{ stop }}" style="max-width:90vw; max-height:90vh; display:flex; flex-direction:column; align-items:center; gap:16px;">
+        <img src="{{ lightboxSrc }}" alt="확대 이미지" style="max-width:100%; max-height:78vh; border-radius:20px; box-shadow:0 20px 60px rgba(0,0,0,0.5);" />
+        <div style="display:flex; gap:10px;">
+          <button onClick="{{ downloadLightbox }}" style="background:#ff4800; color:#ffffff; border:none; border-radius:14px; padding:12px 22px; font-size:14px; font-weight:700; cursor:pointer; box-shadow: rgba(255,72,0,0.4) 0px 4px 14px;">다운로드</button>
+          <button onClick="{{ closeLightbox }}" style="background:#ffffff; color:#222222; border:none; border-radius:14px; padding:12px 22px; font-size:14px; font-weight:600; cursor:pointer;">닫기</button>
+        </div>
+      </div>
+    </div>
+  </sc-if>
+
+  <!-- API key modal -->
+  <sc-if value="{{ showKeyModal }}" hint-placeholder-val="{{ false }}">
+    <div onClick="{{ closeKeyModal }}" style="position:fixed; inset:0; z-index:80; background:rgba(0,0,0,0.5); display:flex; align-items:center; justify-content:center; padding:24px;">
+      <div onClick="{{ stop }}" style="width:460px; max-width:100%; background:#ffffff; border-radius:20px; padding:28px; box-shadow:0 24px 60px rgba(0,0,0,0.3);">
+        <div style="font-size:20px; font-weight:600; letter-spacing:-0.2px; margin-bottom:8px;">OpenAI API 키</div>
+        <div style="font-size:13px; color:#6a6a6a; line-height:1.5; margin-bottom:18px;">이미지 생성을 위해 OpenAI API 키가 필요합니다. 키는 이 브라우저에만 저장되며 외부로 전송되지 않습니다.</div>
+        <input value="{{ apiKeyInput }}" onInput="{{ onApiKeyInput }}" type="password" placeholder="sk-..." style="width:100%; border:1px solid #dddddd; border-radius:14px; padding:13px 15px; font-size:14px; color:#222222; margin-bottom:18px;" style-focus="border-color:#ff4800; box-shadow:0 0 0 3px #ffece2;" />
+        <div style="display:flex; gap:10px; justify-content:flex-end;">
+          <button onClick="{{ closeKeyModal }}" style="background:transparent; border:1px solid #dddddd; border-radius:8px; padding:11px 18px; font-size:14px; font-weight:600; color:#222222; cursor:pointer;">취소</button>
+          <button onClick="{{ saveKey }}" style="background:#ff4800; border:none; border-radius:8px; padding:11px 20px; font-size:14px; font-weight:700; color:#ffffff; cursor:pointer;">저장</button>
+        </div>
+      </div>
+    </div>
+  </sc-if>
+
+</div>
+</x-dc>
+<script type="text/x-dc" data-dc-script data-props="{&quot;$preview&quot;:{&quot;width&quot;:1280,&quot;height&quot;:840}}">
+class Component extends DCLogic {
+  state = {
+    prompt: '',
+    negative: '',
+    styles: [],
+    size: '1024x1024',
+    quality: 'high',
+    background: 'opaque',
+    format: 'png',
+    compression: 85,
+    n: 1,
+    moderation: 'auto',
+    model: 'gpt-image-2',
+    customW: 1024,
+    customH: 1024,
+    useCustomSize: false,
+    advancedOpen: false,
+    apiKey: '',
+    apiKeyInput: '',
+    showKeyModal: false,
+    loading: false,
+    error: null,
+    results: [],
+    history: [],
+    lightbox: null,
+  };
+
+  STYLES = [
+    { key: 'realistic', label: '실사 사진', suffix: 'photorealistic, ultra detailed, natural lighting, 8k' },
+    { key: '3d', label: '3D 렌더', suffix: '3D render, octane render, soft studio lighting, high detail' },
+    { key: 'illust', label: '플랫 일러스트', suffix: 'flat vector illustration, clean bold shapes, minimal' },
+    { key: 'anime', label: '애니메이션', suffix: 'anime style, vibrant colors, cel shading, crisp lineart' },
+    { key: 'water', label: '수채화', suffix: 'watercolor painting, soft color washes, paper texture' },
+    { key: 'line', label: '미니멀 라인', suffix: 'minimal single-weight line art on clean background' },
+    { key: 'neon', label: '네온 사이버펑크', suffix: 'cyberpunk, glowing neon lighting, futuristic atmosphere' },
+    { key: 'film', label: '빈티지 필름', suffix: 'vintage 35mm film photo, grain, faded warm tones' },
+    { key: 'oil', label: '유화', suffix: 'oil painting, visible brush strokes, rich textured canvas' },
+    { key: 'sketch', label: '연필 스케치', suffix: 'detailed pencil sketch, hand-drawn graphite shading' },
+    { key: 'pixel', label: '픽셀 아트', suffix: 'pixel art, 16-bit retro game style, crisp pixels' },
+    { key: 'pop', label: '팝아트', suffix: 'pop art, bold flat colors, halftone dots, comic style' },
+    { key: 'iso', label: '아이소메트릭', suffix: 'isometric illustration, clean geometric 3D, soft shadows' },
+    { key: 'lowpoly', label: '로우폴리', suffix: 'low poly 3D, faceted geometric shapes, flat shading' },
+    { key: 'clay', label: '클레이', suffix: 'claymation style, handmade clay texture, stop-motion look' },
+    { key: 'product', label: '제품 목업', suffix: 'professional product photography, studio lighting, clean seamless background' },
+    { key: 'logo', label: '로고 / 엠블럼', suffix: 'minimal vector logo emblem, flat, centered, simple' },
+    { key: 'story', label: '동화책', suffix: 'storybook illustration, soft warm whimsical, children book style' },
+    { key: 'poster', label: '그래픽 포스터', suffix: 'graphic poster design, bold typographic composition, flat shapes' },
+    { key: 'bw', label: '흑백 사진', suffix: 'black and white photography, high contrast dramatic monochrome' },
+  ];
+
+  USECASES = [
+    { key: 'sns', label: 'SNS 정사각', desc: '1:1 · 고품질', patch: { size: '1024x1024', quality: 'high', format: 'png', background: 'opaque' } },
+    { key: 'banner', label: '가로 배너', desc: '3:2 · 고품질', patch: { size: '1536x1024', quality: 'high', format: 'png', background: 'opaque' } },
+    { key: 'poster', label: '세로 포스터', desc: '2:3 · 고품질', patch: { size: '1024x1536', quality: 'high', format: 'png', background: 'opaque' } },
+    { key: 'icon', label: '투명 아이콘', desc: '1:1 · PNG 투명', patch: { size: '1024x1024', quality: 'high', format: 'png', background: 'transparent' } },
+  ];
+
+  componentDidMount() {
+    let loaded = {};
+    try { const raw = localStorage.getItem('qimg.settings'); if (raw) loaded = JSON.parse(raw) || {}; } catch (e) {}
+    if (!loaded.model || loaded.model === 'gpt-image-1') loaded.model = 'gpt-image-2';
+    let key = '';
+    try { key = localStorage.getItem('qimg.apiKey') || ''; } catch (e) {}
+    this.setState({ ...loaded, apiKey: key, apiKeyInput: key, showKeyModal: !key });
+  }
+
+  persist() {
+    try {
+      const s = this.state;
+      localStorage.setItem('qimg.settings', JSON.stringify({
+        prompt: s.prompt, negative: s.negative, styles: s.styles, size: s.size,
+        quality: s.quality, background: s.background, format: s.format,
+        compression: s.compression, n: s.n, moderation: s.moderation, model: s.model,
+        customW: s.customW, customH: s.customH, useCustomSize: s.useCustomSize,
+      }));
+    } catch (e) {}
+  }
+
+  setCustomSize(patch) {
+    this.setState(s => {
+      const cw = patch.customW != null ? patch.customW : s.customW;
+      const ch = patch.customH != null ? patch.customH : s.customH;
+      return { ...patch, useCustomSize: true, size: cw + 'x' + ch };
+    }, () => this.persist());
+  }
+
+  toggleCustomSize() {
+    this.setState(s => {
+      const on = !s.useCustomSize;
+      return { useCustomSize: on, size: on ? (s.customW + 'x' + s.customH) : '1024x1024' };
+    }, () => this.persist());
+  }
+
+  update(patch) { this.setState(patch, () => this.persist()); }
+
+  toggleStyle(key) {
+    this.setState(s => {
+      const has = s.styles.includes(key);
+      return { styles: has ? s.styles.filter(k => k !== key) : [...s.styles, key] };
+    }, () => this.persist());
+  }
+
+  buildPrompt() {
+    const parts = [this.state.prompt.trim()];
+    const suffixes = this.STYLES.filter(s => this.state.styles.includes(s.key)).map(s => s.suffix);
+    if (suffixes.length) parts.push(suffixes.join(', '));
+    if (this.state.negative.trim()) parts.push('Avoid: ' + this.state.negative.trim());
+    return parts.filter(Boolean).join('. ');
+  }
+
+  async generate() {
+    if (this.state.loading) return;
+    if (!this.state.apiKey) { this.setState({ showKeyModal: true }); return; }
+    if (!this.state.prompt.trim()) { this.setState({ error: '프롬프트를 입력해 주세요.' }); return; }
+
+    let format = this.state.format;
+    let background = this.state.background;
+    if (background === 'transparent' && format === 'jpeg') format = 'png';
+
+    const prompt = this.buildPrompt();
+    this.setState({ loading: true, error: null, results: [] });
+
+    try {
+      const body = {
+        model: this.state.model || 'gpt-image-2',
+        prompt,
+        n: this.state.n,
+        size: this.state.size,
+        quality: this.state.quality,
+        background,
+        output_format: format,
+      };
+      if (format === 'jpeg' || format === 'webp') body.output_compression = this.state.compression;
+      if (this.state.moderation) body.moderation = this.state.moderation;
+
+      const res = await fetch('https://api.openai.com/v1/images/generations', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'Authorization': 'Bearer ' + this.state.apiKey },
+        body: JSON.stringify(body),
+      });
+      const json = await res.json();
+      if (!res.ok) throw new Error((json.error && json.error.message) || ('요청 실패 (' + res.status + ')'));
+
+      const imgs = (json.data || []).map((d, i) => ({
+        id: Date.now() + '-' + i, b64: d.b64_json, format, prompt, size: this.state.size,
+      }));
+      if (!imgs.length) throw new Error('이미지를 받지 못했습니다.');
+
+      this.setState(s => ({
+        loading: false, results: imgs, history: [...imgs, ...s.history].slice(0, 30),
+      }));
+    } catch (e) {
+      let msg = e.message || '이미지 생성 중 오류가 발생했습니다.';
+      if (/Failed to fetch|NetworkError/i.test(msg)) msg = '네트워크 오류 또는 API 키 권한 문제일 수 있습니다. 키와 결제 설정을 확인해 주세요.';
+      this.setState({ loading: false, error: msg });
+    }
+  }
+
+  dataUrl(item) { return 'data:image/' + item.format + ';base64,' + item.b64; }
+
+  download(item) {
+    const a = document.createElement('a');
+    a.href = this.dataUrl(item);
+    a.download = 'qimage-' + item.id + '.' + item.format;
+    document.body.appendChild(a); a.click(); a.remove();
+  }
+
+  aspectFor(size) {
+    if (!size || size === 'auto') return '1 / 1';
+    const m = String(size).match(/^(\d+)x(\d+)$/);
+    if (m) return m[1] + ' / ' + m[2];
+    return '1 / 1';
+  }
+
+  renderVals() {
+    const s = this.state;
+    const ON_BG = '#fff1eb', ON_BORDER = '#ff4800', ON_COLOR = '#ff4800';
+
+    const styleChips = this.STYLES.map(o => {
+      const active = s.styles.includes(o.key);
+      return { label: o.label, onClick: () => this.toggleStyle(o.key),
+        bg: active ? ON_BG : '#ffffff', border: active ? ON_BORDER : '#dddddd', color: active ? ON_COLOR : '#222222' };
+    });
+
+    const useCaseChips = this.USECASES.map(o => {
+      const active = Object.keys(o.patch).every(k => s[k] === o.patch[k]);
+      return { label: o.label, desc: o.desc, onClick: () => this.update({ ...o.patch }),
+        bg: active ? ON_BG : '#ffffff', border: active ? ON_BORDER : '#dddddd', titleColor: active ? ON_COLOR : '#222222' };
+    });
+
+    const sizeDefs = [
+      { value: '1024x1024', label: '정사각', sub: '1:1 · 1024px', swW: '16px', swH: '16px' },
+      { value: '1536x1024', label: '가로', sub: '3:2 · 1536px', swW: '20px', swH: '14px' },
+      { value: '1024x1536', label: '세로', sub: '2:3 · 1536px', swW: '14px', swH: '20px' },
+      { value: '1792x1024', label: '와이드', sub: '16:9 · 1792px', swW: '22px', swH: '12px' },
+      { value: '1024x1792', label: '롱', sub: '9:16 · 1792px', swW: '12px', swH: '22px' },
+      { value: 'auto', label: '자동', sub: '모델이 선택', swW: '16px', swH: '16px' },
+    ];
+    const sizeOptions = sizeDefs.map(o => {
+      const active = !s.useCustomSize && s.size === o.value;
+      return { label: o.label, sub: o.sub, swW: o.swW, swH: o.swH,
+        onClick: () => this.update({ size: o.value, useCustomSize: false }),
+        bg: active ? ON_BG : '#ffffff', border: active ? ON_BORDER : '#dddddd', color: active ? ON_COLOR : '#222222',
+        swatch: active ? '#ffe1d3' : '#f7f7f7', swatchBorder: active ? '#ff4800' : '#c1c1c1' };
+    });
+
+    const seg = (value, defs, key) => defs.map(o => {
+      const active = value === o.value;
+      return { label: o.label, onClick: () => this.update({ [key]: o.value }),
+        bg: active ? '#ffffff' : 'transparent', color: active ? '#ff4800' : '#6a6a6a',
+        shadow: active ? 'rgba(0,0,0,0.02) 0px 0px 0px 1px, rgba(0,0,0,0.08) 0px 1px 3px 0px' : 'none' };
+    });
+
+    const qualityOptions = seg(s.quality, [
+      { value: 'low', label: '낮음' }, { value: 'medium', label: '보통' },
+      { value: 'high', label: '높음' }, { value: 'auto', label: '자동' },
+    ], 'quality');
+    const bgOptions = seg(s.background, [
+      { value: 'opaque', label: '불투명' }, { value: 'transparent', label: '투명' }, { value: 'auto', label: '자동' },
+    ], 'background');
+    const formatOptions = seg(s.format, [
+      { value: 'png', label: 'png' }, { value: 'jpeg', label: 'jpeg' }, { value: 'webp', label: 'webp' },
+    ], 'format');
+    const countOptions = seg(s.n, [
+      { value: 1, label: '1장' }, { value: 2, label: '2장' }, { value: 3, label: '3장' }, { value: 4, label: '4장' },
+    ], 'n');
+    const moderationOptions = seg(s.moderation, [
+      { value: 'auto', label: '기본' }, { value: 'low', label: '완화' },
+    ], 'moderation');
+
+    const resultViews = s.results.map(item => ({
+      src: this.dataUrl(item),
+      onDownload: (e) => { e.stopPropagation(); this.download(item); },
+      onExpand: () => this.setState({ lightbox: item }),
+    }));
+    const historyViews = s.history.map(item => ({
+      src: this.dataUrl(item),
+      onExpand: () => this.setState({ lightbox: item }),
+    }));
+
+    const hasResults = !s.loading && s.results.length > 0;
+    const isEmpty = !s.loading && s.results.length === 0;
+    const gridCols = s.n >= 2 ? 'repeat(2, 1fr)' : 'minmax(0, 560px)';
+    const skeletonList = Array.from({ length: s.n }, (_, i) => i);
+
+    const hasKey = !!s.apiKey;
+    const generateDisabled = s.loading;
+
+    return {
+      prompt: s.prompt, negative: s.negative, model: s.model, compression: s.compression,
+      advancedOpen: s.advancedOpen, advCaret: s.advancedOpen ? '180deg' : '0deg',
+      showCompression: s.format === 'jpeg' || s.format === 'webp',
+      styleChips, useCaseChips, sizeOptions, qualityOptions, bgOptions, formatOptions, countOptions, moderationOptions,
+
+      useCustomSize: s.useCustomSize, customW: s.customW, customH: s.customH,
+      customCaret: s.useCustomSize ? '−' : '+',
+      customBtnBg: s.useCustomSize ? ON_BG : '#ffffff',
+      customBtnBorder: s.useCustomSize ? ON_BORDER : '#dddddd',
+      customBtnColor: s.useCustomSize ? ON_COLOR : '#222222',
+      toggleCustomSize: () => this.toggleCustomSize(),
+      onCustomW: (e) => this.setCustomSize({ customW: Math.max(1, Number(e.target.value) || 0) }),
+      onCustomH: (e) => this.setCustomSize({ customH: Math.max(1, Number(e.target.value) || 0) }),
+
+      onPromptInput: (e) => this.update({ prompt: e.target.value }),
+      onNegativeInput: (e) => this.update({ negative: e.target.value }),
+      onModelInput: (e) => this.update({ model: e.target.value }),
+      onCompressionInput: (e) => this.update({ compression: Number(e.target.value) }),
+      toggleAdvanced: () => this.setState(st => ({ advancedOpen: !st.advancedOpen })),
+      fillExample: () => this.update({ prompt: '창가에 앉아 커피를 마시는 고양이, 따뜻한 아침 햇살, 아늑한 분위기' }),
+
+      finalPromptPreview: this.buildPrompt() || '(프롬프트를 입력하면 여기에 표시됩니다)',
+
+      generate: () => this.generate(),
+      loading: s.loading,
+      generateDisabled,
+      generateBg: s.loading ? '#ffb38f' : '#ff4800',
+      generateCursor: s.loading ? 'default' : 'pointer',
+      generateShadow: s.loading ? 'none' : 'rgba(255,72,0,0.35) 0px 6px 18px',
+      generateLabel: s.loading ? '생성 중…' : (hasKey ? '이미지 생성' : 'API 키 입력 후 생성'),
+
+      isEmpty, hasResults, gridCols, skeletonList, aspect: this.aspectFor(s.size),
+      resultViews,
+      resultMeta: s.results.length + '장 · ' + (s.size === 'auto' ? '자동 크기' : s.size) + ' · ' + s.format.toUpperCase(),
+
+      hasHistory: s.history.length > 0,
+      historyViews, historyCount: s.history.length + '장',
+      clearHistory: () => this.setState({ history: [] }),
+
+      hasError: !!s.error, error: s.error, clearError: () => this.setState({ error: null }),
+
+      lightbox: s.lightbox, lightboxSrc: s.lightbox ? this.dataUrl(s.lightbox) : '',
+      closeLightbox: () => this.setState({ lightbox: null }),
+      downloadLightbox: () => this.download(s.lightbox),
+      stop: (e) => e.stopPropagation(),
+
+      showKeyModal: s.showKeyModal,
+      keyStatusLabel: hasKey ? '● 연결됨' : '○ 키 미설정',
+      keyStatusColor: hasKey ? '#1f8a5b' : '#6a6a6a',
+      openKeyModal: () => this.setState({ showKeyModal: true, apiKeyInput: s.apiKey }),
+      closeKeyModal: () => this.setState({ showKeyModal: false }),
+      apiKeyInput: s.apiKeyInput,
+      onApiKeyInput: (e) => this.setState({ apiKeyInput: e.target.value }),
+      saveKey: () => {
+        const k = (s.apiKeyInput || '').trim();
+        try { localStorage.setItem('qimg.apiKey', k); } catch (e) {}
+        this.setState({ apiKey: k, showKeyModal: false });
+      },
+    };
+  }
+}
+</script>
+</body>
+</html>

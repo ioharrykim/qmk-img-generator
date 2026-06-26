@@ -1,0 +1,27 @@
+{
+  "name": "q-image-generator",
+  "private": true,
+  "version": "0.1.0",
+  "type": "module",
+  "description": "큐이미지 스튜디오 — gpt-image-2 기반 큐마켓 이미지 생성기",
+  "scripts": {
+    "dev": "vite",
+    "build": "vite build",
+    "build:proxy": "cross-env VITE_API_MODE=proxy vite build",
+    "preview": "vite preview",
+    "server": "node server/index.js",
+    "start": "node server/index.js",
+    "serve": "npm run build:proxy && node server/index.js"
+  },
+  "dependencies": {
+    "@supabase/supabase-js": "^2.45.4",
+    "express": "^4.21.2",
+    "react": "^18.3.1",
+    "react-dom": "^18.3.1"
+  },
+  "devDependencies": {
+    "@vitejs/plugin-react": "^4.3.3",
+    "cross-env": "^7.0.3",
+    "vite": "^5.4.10"
+  }
+}
