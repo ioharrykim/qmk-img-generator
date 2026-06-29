@@ -2,7 +2,7 @@ import { imgSrc, aspectFor } from '../api'
 import { recordUsd, sumUsd, usdToKrw, formatKrw } from '../pricing'
 
 // 우측 메인 뷰포트 — 빈 상태 / 로딩 스켈레톤 / 결과 그리드
-export default function Viewport({ loading, results, settings, krwRate, onExpand, onDownload, onUseAsReference, onReusePrompt, onMaskEdit }) {
+export default function Viewport({ loading, results, settings, krwRate, onExpand, onDownload, onUseAsReference, onReusePrompt, onMaskEdit, onSendToBoard }) {
   const hasResults = !loading && results.length > 0
   const isEmpty = !loading && results.length === 0
   const gridCols = settings.n >= 2 ? 'repeat(2, 1fr)' : 'minmax(0, 560px)'
@@ -122,8 +122,9 @@ export default function Viewport({ loading, results, settings, krwRate, onExpand
                 <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 6 }}>
                   <span style={{ fontSize: 11, color: '#6a6a6a' }}>≈ {formatKrw(usdToKrw(recordUsd(item), krwRate))} / 장</span>
                 </div>
-                <div style={{ display: 'flex', gap: 6 }}>
+                <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6 }}>
                   <CardAction label="🖌 부분 편집" onClick={() => onMaskEdit(item)} />
+                  <CardAction label="🎨 보드로" onClick={() => onSendToBoard(item)} />
                   <CardAction label="참조로 추가" onClick={() => onUseAsReference(item)} />
                   <CardAction label="프롬프트 재사용" onClick={() => onReusePrompt(item)} />
                 </div>

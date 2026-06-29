@@ -11,6 +11,7 @@ import Login from './components/Login'
 import CostBadge from './components/CostBadge'
 import MaskEditor from './components/MaskEditor'
 import PasswordModal from './components/PasswordModal'
+import CompositeBoard from './components/CompositeBoard'
 import { DEFAULT_SETTINGS, PERSISTED_FIELDS, STORAGE_KEYS, SIZE_DEFS } from './constants'
 import { KEY_REQUIRED, MAX_REFERENCES, SUPABASE_ENABLED } from './config'
 import { generateImages, buildPrompt } from './api'
@@ -169,6 +170,11 @@ export default function App() {
   const [maskGenerating, setMaskGenerating] = useState(false)
   const [passwordModalOpen, setPasswordModalOpen] = useState(false)
   const [passwordPrompt, setPasswordPrompt] = useState(false)
+
+  // 합성 보드 (레이어/블렌딩)
+  const [boardOpen, setBoardOpen] = useState(false)
+  const [boardLayers, setBoardLayers] = useState([])
+  const [boardConfig, setBoardConfig] = useState({ w: 1024, h: 1024, bg: 'transparent' })
 
   // 설정 저장
   useEffect(() => {
@@ -582,6 +588,47 @@ export default function App() {
     }
   }
 
+  // ── 합성 보드 ───────────────────────────────
+  const addBoardLayer = ({ dataUrl, name, width, height }) => {
+    if (!dataUrl) return
+    const aspect = width && height ? width / height : 1
+    const isFirst = boardLayers.length === 0
+    let cfg = boardConfig
+    if (isFirst && width && height) {
+      cfg = { ...boardConfig, w: width, h: height }
+      setBoardConfig(cfg)
+    }
+    let layer
+    if (isFirst) {
+      layer = { id: uid(), name: name || '레이어', src: dataUrl, x: 0, y: 0, w: cfg.w, h: cfg.h, aspect, opacity: 1, blend: 'source-over', visible: true }
+    } else {
+      const s = Math.min((cfg.w * 0.8) / (width || cfg.w), (cfg.h * 0.8) / (height || cfg.h), 1)
+      const w = (width || cfg.w) * s
+      const h = (height || cfg.h) * s
+      layer = { id: uid(), name: name || '레이어', src: dataUrl, x: (cfg.w - w) / 2, y: (cfg.h - h) / 2, w, h, aspect, opacity: 1, blend: 'source-over', visible: true }
+    }
+    setBoardLayers((prev) => [...prev, layer])
+  }
+
+  const resolveItemForBoard = async (item) => {
+    const blob = await itemToBlob(item)
+    if (!blob) return null
+    const dataUrl = await blobToDataUrl(blob)
+    const dims = await measureImageBlob(blob)
+    return { dataUrl, name: '레이어', width: dims.width, height: dims.height }
+  }
+
+  const sendToBoard = async (item) => {
+    const payload = await resolveItemForBoard(item)
+    if (!payload) {
+      setToast({ type: 'error', message: '이미지를 불러오지 못했습니다.' })
+      return
+    }
+    addBoardLayer(payload)
+    setBoardOpen(true)
+    setToast({ type: 'success', message: '합성 보드에 추가됨' })
+  }
+
   // ── 생성 ────────────────────────────────────
   const generate = async () => {
     if (loading) return
@@ -791,8 +838,14 @@ export default function App() {
             onUseAsReference={addItemAsReference}
             onReusePrompt={reusePrompt}
             onMaskEdit={openMaskEditor}
+            onSendToBoard={sendToBoard}
           />
-          <HistoryStrip history={history} onExpand={setLightbox} onOpenPanel={() => setHistoryPanelOpen(true)} />
+          <HistoryStrip
+            history={history}
+            onExpand={setLightbox}
+            onOpenPanel={() => setHistoryPanelOpen(true)}
+            onOpenBoard={() => setBoardOpen(true)}
+          />
         </main>
       </div>
 
@@ -808,11 +861,24 @@ export default function App() {
         onReuse={reuseItem}
         onUseAsReference={addItemAsReference}
         onMaskEdit={openMaskEditor}
+        onSendToBoard={sendToBoard}
       />
 
       {maskBase && (
         <MaskEditor base={maskBase} generating={maskGenerating} onClose={() => setMaskBase(null)} onSubmit={runMaskEdit} />
       )}
+
+      <CompositeBoard
+        open={boardOpen}
+        layers={boardLayers}
+        onLayersChange={setBoardLayers}
+        config={boardConfig}
+        onConfigChange={setBoardConfig}
+        history={history}
+        resolveItem={resolveItemForBoard}
+        onAddImage={addBoardLayer}
+        onClose={() => setBoardOpen(false)}
+      />
 
       <PasswordModal
         open={passwordModalOpen}
