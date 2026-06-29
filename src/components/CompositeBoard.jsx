@@ -2,7 +2,8 @@ import { useEffect, useRef, useState } from 'react'
 import { downloadBlob, blobToDataUrl, uid } from '../utils'
 
 // 포토샵 웹 느낌의 레이어 합성 보드 (100% 클라이언트, OpenAI 미사용)
-// 브라우저 Canvas globalCompositeOperation = 포토샵 블렌딩 모드
+// - 블렌딩(globalCompositeOperation), 이동/리사이즈, 비파괴 crop, undo/redo
+// 히스토리(layers/config/selectedId)는 App 이 소유 — 여기선 onCommit/getSnapshot 으로 기록.
 
 const BLEND_MODES = [
   { value: 'source-over', label: '보통' },
@@ -24,22 +25,80 @@ const BLEND_MODES = [
 ]
 
 const HANDLE_KEYS = ['nw', 'n', 'ne', 'e', 'se', 's', 'sw', 'w']
-const CORNER_KEYS = ['nw', 'ne', 'se', 'sw']
 const CURSORS = { nw: 'nwse-resize', se: 'nwse-resize', ne: 'nesw-resize', sw: 'nesw-resize', n: 'ns-resize', s: 'ns-resize', e: 'ew-resize', w: 'ew-resize' }
+const CROP_MIN = 10
 
-export default function CompositeBoard({ open, layers, onLayersChange, config, onConfigChange, history = [], resolveItem, onAddImage, onClose }) {
+function cropOf(l, img) {
+  if (l.crop && l.crop.sw > 0 && l.crop.sh > 0) return l.crop
+  return { sx: 0, sy: 0, sw: img ? img.naturalWidth : l.w, sh: img ? img.naturalHeight : l.h }
+}
+
+// 공통 사각형 리사이즈 (transform: 비율옵션 / crop: bounds 제한)
+function resizeRect(r, handle, p, { aspect, keepAspect = false, bounds = null, min = 16 } = {}) {
+  let x = r.x, y = r.y, w = r.w, h = r.h
+  const right = x + w, bottom = y + h
+  const he = handle.includes('e'), hw = handle.includes('w'), hn = handle.includes('n'), hs = handle.includes('s')
+  if (he) w = Math.max(min, p.x - x)
+  else if (hw) { w = Math.max(min, right - p.x); x = right - w }
+  if (hs) h = Math.max(min, p.y - y)
+  else if (hn) { h = Math.max(min, bottom - p.y); y = bottom - h }
+  const isCorner = (he || hw) && (hn || hs)
+  if (keepAspect && isCorner && aspect) {
+    h = w / aspect
+    if (hn) y = bottom - h
+  }
+  if (bounds) {
+    if (x < bounds.x) { w -= bounds.x - x; x = bounds.x }
+    if (y < bounds.y) { h -= bounds.y - y; y = bounds.y }
+    if (x + w > bounds.x + bounds.w) w = bounds.x + bounds.w - x
+    if (y + h > bounds.y + bounds.h) h = bounds.y + bounds.h - y
+    w = Math.max(min, w); h = Math.max(min, h)
+  }
+  return { x, y, w, h }
+}
+
+export default function CompositeBoard({
+  open,
+  layers,
+  onLayersChange,
+  config,
+  onConfigChange,
+  selectedId,
+  onSelect,
+  getSnapshot,
+  onCommit,
+  onUndo,
+  onRedo,
+  canUndo,
+  canRedo,
+  history = [],
+  resolveItem,
+  onAddImage,
+  onClose,
+}) {
   const compRef = useRef(null)
   const overlayRef = useRef(null)
   const workspaceRef = useRef(null)
-  const cacheRef = useRef(new Map()) // src -> HTMLImageElement
+  const cacheRef = useRef(new Map())
   const fileRef = useRef(null)
   const dragRef = useRef(null)
+  const beforeRef = useRef(null) // 슬라이더/사이즈 입력용 임시 snapshot
   const [tick, setTick] = useState(0)
-  const [selectedId, setSelectedId] = useState(null)
   const [picker, setPicker] = useState(false)
   const [busy, setBusy] = useState(false)
   const [zoom, setZoom] = useState(1)
   const [cursor, setCursor] = useState('default')
+  const [cropMode, setCropMode] = useState(false)
+  const [cropDraft, setCropDraft] = useState(null) // {x,y,w,h} (보드 좌표)
+
+  const selected = layers.find((l) => l.id === selectedId)
+
+  // 디스크리트 액션 = before snapshot 저장 후 적용
+  const commitAct = (fn) => {
+    const before = getSnapshot()
+    fn()
+    onCommit(before)
+  }
 
   // ── 이미지 로드 ──────────────────────
   useEffect(() => {
@@ -60,13 +119,11 @@ export default function CompositeBoard({ open, layers, onLayersChange, config, o
     }
   }, [layers, open])
 
-  // ── 줌: 열릴 때/보드 크기 변경 시 맞춤 ──
+  // ── 줌 맞춤 ──────────────────────────
   const fitZoom = () => {
     const el = workspaceRef.current
     if (!el) return
-    const availW = el.clientWidth - 56
-    const availH = el.clientHeight - 72
-    const z = Math.min(availW / config.w, availH / config.h, 1)
+    const z = Math.min((el.clientWidth - 56) / config.w, (el.clientHeight - 72) / config.h, 1)
     setZoom(Math.max(0.05, z || 1))
   }
   useEffect(() => {
@@ -76,10 +133,19 @@ export default function CompositeBoard({ open, layers, onLayersChange, config, o
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [open, config.w, config.h])
 
+  // crop 모드 종료 시 draft 정리, 선택 변경 시 crop 모드 해제
+  useEffect(() => {
+    if (!cropMode) setCropDraft(null)
+  }, [cropMode])
+  useEffect(() => {
+    setCropMode(false)
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [selectedId])
+
   const update = (id, patch) =>
     onLayersChange((prev) => prev.map((l) => (l.id === id ? { ...l, ...(typeof patch === 'function' ? patch(l) : patch) } : l)))
 
-  // ── 렌더 (preview = export 동일 경로) ──
+  // ── 렌더 (preview = export 동일 경로, crop rect 반영) ──
   const renderComposite = (canvas, jpegBg) => {
     const c = canvas || compRef.current
     if (!c) return null
@@ -96,6 +162,7 @@ export default function CompositeBoard({ open, layers, onLayersChange, config, o
       if (!l.visible) continue
       const img = cacheRef.current.get(l.src)
       if (!img) continue
+      const cr = cropOf(l, img)
       ctx.save()
       ctx.globalAlpha = l.opacity == null ? 1 : l.opacity
       ctx.globalCompositeOperation = l.blend || 'source-over'
@@ -103,9 +170,9 @@ export default function CompositeBoard({ open, layers, onLayersChange, config, o
       if (rot) {
         ctx.translate(l.x + l.w / 2, l.y + l.h / 2)
         ctx.rotate((rot * Math.PI) / 180)
-        ctx.drawImage(img, -l.w / 2, -l.h / 2, l.w, l.h)
+        ctx.drawImage(img, cr.sx, cr.sy, cr.sw, cr.sh, -l.w / 2, -l.h / 2, l.w, l.h)
       } else {
-        ctx.drawImage(img, l.x, l.y, l.w, l.h)
+        ctx.drawImage(img, cr.sx, cr.sy, cr.sw, cr.sh, l.x, l.y, l.w, l.h)
       }
       ctx.restore()
     }
@@ -118,9 +185,8 @@ export default function CompositeBoard({ open, layers, onLayersChange, config, o
     const r = o.getBoundingClientRect()
     return r.width > 0 ? config.w / r.width : 1
   }
-
-  const handlePos = (l, key) => {
-    const { x, y, w, h } = l
+  const handlePos = (rect, key) => {
+    const { x, y, w, h } = rect
     switch (key) {
       case 'nw': return [x, y]
       case 'n': return [x + w / 2, y]
@@ -133,6 +199,19 @@ export default function CompositeBoard({ open, layers, onLayersChange, config, o
       default: return [x, y]
     }
   }
+  const drawHandles = (ctx, rect, s, fill) => {
+    const hs = 9 * s
+    HANDLE_KEYS.forEach((k) => {
+      const [hx, hy] = handlePos(rect, k)
+      ctx.fillStyle = fill
+      ctx.strokeStyle = '#1f1f1f'
+      ctx.lineWidth = 1 * s
+      ctx.beginPath()
+      ctx.rect(hx - hs / 2, hy - hs / 2, hs, hs)
+      ctx.fill()
+      ctx.stroke()
+    })
+  }
 
   const renderOverlay = () => {
     const o = overlayRef.current
@@ -141,172 +220,229 @@ export default function CompositeBoard({ open, layers, onLayersChange, config, o
     o.height = config.h
     const ctx = o.getContext('2d')
     ctx.clearRect(0, 0, o.width, o.height)
-    const l = layers.find((x) => x.id === selectedId)
-    if (!l) return
     const s = boardScale()
+    if (cropMode && selected && cropDraft) {
+      const L = selected
+      const d = cropDraft
+      // 레이어 영역 중 crop 박스 밖을 어둡게
+      ctx.fillStyle = 'rgba(0,0,0,0.5)'
+      ctx.fillRect(L.x, L.y, L.w, d.y - L.y) // top
+      ctx.fillRect(L.x, d.y + d.h, L.w, L.y + L.h - (d.y + d.h)) // bottom
+      ctx.fillRect(L.x, d.y, d.x - L.x, d.h) // left
+      ctx.fillRect(d.x + d.w, d.y, L.x + L.w - (d.x + d.w), d.h) // right
+      // crop 박스
+      ctx.strokeStyle = '#ffffff'
+      ctx.lineWidth = 1.5 * s
+      ctx.strokeRect(d.x, d.y, d.w, d.h)
+      drawHandles(ctx, d, s, '#ffffff')
+      return
+    }
+    if (!selected) return
     ctx.strokeStyle = '#2563eb'
     ctx.lineWidth = 1.5 * s
     ctx.setLineDash([6 * s, 4 * s])
-    ctx.strokeRect(l.x, l.y, l.w, l.h)
+    ctx.strokeRect(selected.x, selected.y, selected.w, selected.h)
     ctx.setLineDash([])
-    const hs = 9 * s
-    HANDLE_KEYS.forEach((k) => {
-      const [hx, hy] = handlePos(l, k)
-      ctx.fillStyle = '#ffffff'
-      ctx.strokeStyle = '#2563eb'
-      ctx.lineWidth = 1.5 * s
-      ctx.beginPath()
-      ctx.rect(hx - hs / 2, hy - hs / 2, hs, hs)
-      ctx.fill()
-      ctx.stroke()
-    })
+    drawHandles(ctx, selected, s, '#ffffff')
   }
 
   useEffect(() => {
     if (open) renderComposite()
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [layers, config, tick, open])
-
   useEffect(() => {
     if (open) renderOverlay()
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [layers, selectedId, config, tick, open, zoom])
+  }, [layers, selectedId, config, tick, open, zoom, cropMode, cropDraft])
 
   // ── 좌표/히트테스트 ───────────────────
   const toBoard = (e) => {
-    const o = overlayRef.current
-    const r = o.getBoundingClientRect()
+    const r = overlayRef.current.getBoundingClientRect()
     return { x: ((e.clientX - r.left) / r.width) * config.w, y: ((e.clientY - r.top) / r.height) * config.h }
   }
-  const hitHandle = (l, p) => {
+  const hitHandle = (rect, p) => {
     const rad = 13 * boardScale()
     for (const k of HANDLE_KEYS) {
-      const [hx, hy] = handlePos(l, k)
+      const [hx, hy] = handlePos(rect, k)
       if (Math.abs(p.x - hx) <= rad && Math.abs(p.y - hy) <= rad) return k
     }
     return null
   }
-  const inRect = (l, p) => p.x >= l.x && p.x <= l.x + l.w && p.y >= l.y && p.y <= l.y + l.h
+  const inRect = (r, p) => p.x >= r.x && p.x <= r.x + r.w && p.y >= r.y && p.y <= r.y + r.h
 
   const onPointerDown = (e) => {
     e.preventDefault()
-    try {
-      overlayRef.current.setPointerCapture?.(e.pointerId)
-    } catch (err) {
-      /* 일부 환경에서 capture 실패해도 인터랙션은 진행 */
-    }
+    try { overlayRef.current.setPointerCapture?.(e.pointerId) } catch (err) { /* noop */ }
     const p = toBoard(e)
-    const sel = layers.find((x) => x.id === selectedId)
-    if (sel && sel.visible) {
-      const k = hitHandle(sel, p)
-      if (k) {
-        dragRef.current = { type: 'resize', id: sel.id, handle: k, aspect: sel.w / sel.h || 1 }
-        return
-      }
+
+    if (cropMode && selected && cropDraft) {
+      const k = hitHandle(cropDraft, p)
+      if (k) { dragRef.current = { type: 'crop-resize', handle: k }; return }
+      if (inRect(cropDraft, p)) { dragRef.current = { type: 'crop-move', offX: p.x - cropDraft.x, offY: p.y - cropDraft.y }; return }
+      return
+    }
+
+    if (selected && selected.visible) {
+      const k = hitHandle(selected, p)
+      if (k) { dragRef.current = { type: 'resize', id: selected.id, handle: k, aspect: selected.w / selected.h || 1, before: getSnapshot(), moved: false }; return }
     }
     for (let i = layers.length - 1; i >= 0; i--) {
       const l = layers[i]
       if (l.visible && inRect(l, p)) {
-        setSelectedId(l.id)
-        dragRef.current = { type: 'move', id: l.id, offX: p.x - l.x, offY: p.y - l.y }
+        if (l.id !== selectedId) onSelect(l.id)
+        dragRef.current = { type: 'move', id: l.id, offX: p.x - l.x, offY: p.y - l.y, before: getSnapshot(), moved: false }
         return
       }
     }
-    setSelectedId(null)
-  }
-
-  const resize = (l, handle, p, aspect, shift) => {
-    let { x, y, w, h } = l
-    const keep = CORNER_KEYS.includes(handle) && !shift // 코너 기본 비율 유지, Shift=자유
-    const min = 16
-    if (handle === 'e') w = Math.max(min, p.x - x)
-    else if (handle === 'w') { const ax = x + w; w = Math.max(min, ax - p.x); x = ax - w }
-    else if (handle === 's') h = Math.max(min, p.y - y)
-    else if (handle === 'n') { const ay = y + h; h = Math.max(min, ay - p.y); y = ay - h }
-    else if (handle === 'se') { w = Math.max(min, p.x - x); h = keep ? w / aspect : Math.max(min, p.y - y) }
-    else if (handle === 'ne') { const ay = y + h; w = Math.max(min, p.x - x); h = keep ? w / aspect : Math.max(min, ay - p.y); y = ay - h }
-    else if (handle === 'sw') { const ax = x + w; w = Math.max(min, ax - p.x); h = keep ? w / aspect : Math.max(min, p.y - y); x = ax - w }
-    else if (handle === 'nw') { const ax = x + w, ay = y + h; w = Math.max(min, ax - p.x); h = keep ? w / aspect : Math.max(min, ay - p.y); x = ax - w; y = ay - h }
-    return { x, y, w, h }
+    onSelect(null)
   }
 
   const onPointerMove = (e) => {
     const d = dragRef.current
     if (!d) {
-      // hover 커서
-      const sel = layers.find((x) => x.id === selectedId)
-      if (sel && sel.visible) {
-        const k = hitHandle(sel, toBoard(e))
-        setCursor(k ? CURSORS[k] : inRect(sel, toBoard(e)) ? 'move' : 'default')
+      const ref = cropMode ? cropDraft : selected && selected.visible ? selected : null
+      if (ref) {
+        const p = toBoard(e)
+        const k = hitHandle(ref, p)
+        setCursor(k ? CURSORS[k] : inRect(ref, p) ? 'move' : 'default')
       } else setCursor('default')
       return
     }
     const p = toBoard(e)
-    if (d.type === 'move') {
+    if (d.type === 'crop-move') {
+      const L = selected
+      let nx = p.x - d.offX, ny = p.y - d.offY
+      nx = Math.max(L.x, Math.min(nx, L.x + L.w - cropDraft.w))
+      ny = Math.max(L.y, Math.min(ny, L.y + L.h - cropDraft.h))
+      setCropDraft((c) => ({ ...c, x: nx, y: ny }))
+    } else if (d.type === 'crop-resize') {
+      const L = selected
+      setCropDraft((c) => resizeRect(c, d.handle, p, { bounds: { x: L.x, y: L.y, w: L.w, h: L.h }, min: CROP_MIN }))
+    } else if (d.type === 'move') {
+      d.moved = true
       update(d.id, () => ({ x: p.x - d.offX, y: p.y - d.offY }))
     } else if (d.type === 'resize') {
-      update(d.id, (l) => resize(l, d.handle, p, d.aspect, e.shiftKey))
+      d.moved = true
+      update(d.id, (l) => resizeRect(l, d.handle, p, { aspect: d.aspect, keepAspect: !e.shiftKey, min: 16 }))
     }
   }
 
   const onPointerUp = (e) => {
+    const d = dragRef.current
     dragRef.current = null
-    try {
-      overlayRef.current.releasePointerCapture?.(e.pointerId)
-    } catch (err) {
-      /* 무시 */
-    }
+    try { overlayRef.current.releasePointerCapture?.(e.pointerId) } catch (err) { /* noop */ }
+    if (d && (d.type === 'move' || d.type === 'resize') && d.moved && d.before) onCommit(d.before)
   }
 
-  // ── 레이어 조작 ──────────────────────
-  const removeLayer = (id) => {
-    onLayersChange((prev) => prev.filter((l) => l.id !== id))
-    setSelectedId((cur) => (cur === id ? null : cur))
+  // ── crop 적용/취소/초기화 ──────────────
+  const enterCrop = () => {
+    if (!selected) return
+    setCropDraft({ x: selected.x, y: selected.y, w: selected.w, h: selected.h })
+    setCropMode(true)
   }
-  const move = (id, dir) =>
-    onLayersChange((prev) => {
-      const i = prev.findIndex((l) => l.id === id)
-      if (i < 0) return prev
-      const j = dir === 'up' ? i + 1 : i - 1
-      if (j < 0 || j >= prev.length) return prev
-      const next = [...prev]
-      ;[next[i], next[j]] = [next[j], next[i]]
-      return next
+  const applyCrop = () => {
+    if (!selected || !cropDraft) return
+    const img = cacheRef.current.get(selected.src)
+    const cr = cropOf(selected, img)
+    const scaleX = cr.sw / selected.w
+    const scaleY = cr.sh / selected.h
+    const d = cropDraft
+    const nsx = Math.max(0, cr.sx + (d.x - selected.x) * scaleX)
+    const nsy = Math.max(0, cr.sy + (d.y - selected.y) * scaleY)
+    const nsw = Math.max(1, d.w * scaleX)
+    const nsh = Math.max(1, d.h * scaleY)
+    commitAct(() => update(selected.id, { x: d.x, y: d.y, w: d.w, h: d.h, crop: { sx: nsx, sy: nsy, sw: nsw, sh: nsh }, aspect: d.w / d.h }))
+    setCropMode(false)
+  }
+  const cancelCrop = () => setCropMode(false)
+  const resetCrop = () => {
+    if (!selected) return
+    const img = cacheRef.current.get(selected.src)
+    if (!img) return
+    const cr = cropOf(selected, img)
+    const scaleX = selected.w / cr.sw
+    const scaleY = selected.h / cr.sh
+    const nw = img.naturalWidth * scaleX
+    const nh = img.naturalHeight * scaleY
+    const nx = selected.x - cr.sx * scaleX
+    const ny = selected.y - cr.sy * scaleY
+    commitAct(() => update(selected.id, { x: nx, y: ny, w: nw, h: nh, crop: { sx: 0, sy: 0, sw: img.naturalWidth, sh: img.naturalHeight }, aspect: nw / nh }))
+    setCropMode(false)
+  }
+
+  // ── 레이어 조작 (히스토리 포함) ────────
+  const removeLayer = (id) =>
+    commitAct(() => {
+      onLayersChange((prev) => prev.filter((l) => l.id !== id))
+      if (selectedId === id) onSelect(null)
     })
+  const moveOrder = (id, dir) =>
+    commitAct(() =>
+      onLayersChange((prev) => {
+        const i = prev.findIndex((l) => l.id === id)
+        if (i < 0) return prev
+        const j = dir === 'up' ? i + 1 : i - 1
+        if (j < 0 || j >= prev.length) return prev
+        const next = [...prev]
+        ;[next[i], next[j]] = [next[j], next[i]]
+        return next
+      })
+    )
+  const setBlend = (id, blend) => commitAct(() => update(id, { blend }))
+  const toggleVisible = (id) => commitAct(() => update(id, (l) => ({ visible: !l.visible })))
+  const setBg = (bg) => commitAct(() => onConfigChange({ ...config, bg }))
 
-  // ── 키보드 ───────────────────────────
+  // ── 키보드 (단일 바인딩 + 최신 상태 ref) ──
+  const stateRef = useRef({})
+  stateRef.current = { selected, selectedId, layers, cropMode, cropDraft, canUndo, canRedo, applyCrop, cancelCrop, enterCrop, removeLayer, update, getSnapshot, onCommit, onUndo, onRedo, onSelect, onClose }
   useEffect(() => {
     if (!open) return
     const onKey = (e) => {
       const tag = (e.target.tagName || '').toLowerCase()
       if (tag === 'input' || tag === 'select' || tag === 'textarea') return
-      if ((e.metaKey || e.ctrlKey) && (e.key === 't' || e.key === 'T')) {
+      const st = stateRef.current
+      const mod = e.metaKey || e.ctrlKey
+      if (mod && (e.key === 'z' || e.key === 'Z')) {
         e.preventDefault()
-        if (!selectedId && layers.length) setSelectedId(layers[layers.length - 1].id)
+        if (e.shiftKey) st.onRedo()
+        else st.onUndo()
         return
       }
+      if (mod && (e.key === 'y' || e.key === 'Y')) { e.preventDefault(); st.onRedo(); return }
+      if (mod && (e.key === 't' || e.key === 'T')) {
+        e.preventDefault()
+        if (!st.selectedId && st.layers.length) st.onSelect(st.layers[st.layers.length - 1].id)
+        return
+      }
+      if (st.cropMode) {
+        if (e.key === 'Enter') { e.preventDefault(); st.applyCrop() }
+        else if (e.key === 'Escape') { e.preventDefault(); st.cancelCrop() }
+        return
+      }
+      if ((e.key === 'c' || e.key === 'C') && !mod && st.selected) { e.preventDefault(); st.enterCrop(); return }
       if (e.key === 'Escape') {
-        if (selectedId) setSelectedId(null)
-        else onClose()
+        if (st.selectedId) st.onSelect(null)
+        else st.onClose()
         return
       }
-      const sel = layers.find((l) => l.id === selectedId)
+      const sel = st.selected
       if (!sel) return
-      if (e.key === 'Delete' || e.key === 'Backspace') {
-        e.preventDefault()
-        removeLayer(sel.id)
-        return
-      }
+      if (e.key === 'Delete' || e.key === 'Backspace') { e.preventDefault(); st.removeLayer(sel.id); return }
       const step = e.shiftKey ? 10 : 1
-      if (e.key === 'ArrowLeft') { e.preventDefault(); update(sel.id, (l) => ({ x: l.x - step })) }
-      else if (e.key === 'ArrowRight') { e.preventDefault(); update(sel.id, (l) => ({ x: l.x + step })) }
-      else if (e.key === 'ArrowUp') { e.preventDefault(); update(sel.id, (l) => ({ y: l.y - step })) }
-      else if (e.key === 'ArrowDown') { e.preventDefault(); update(sel.id, (l) => ({ y: l.y + step })) }
+      const moveBy = (dx, dy) => {
+        e.preventDefault()
+        const before = st.getSnapshot()
+        st.update(sel.id, (l) => ({ x: l.x + dx, y: l.y + dy }))
+        st.onCommit(before)
+      }
+      if (e.key === 'ArrowLeft') moveBy(-step, 0)
+      else if (e.key === 'ArrowRight') moveBy(step, 0)
+      else if (e.key === 'ArrowUp') moveBy(0, -step)
+      else if (e.key === 'ArrowDown') moveBy(0, step)
     }
     window.addEventListener('keydown', onKey)
     return () => window.removeEventListener('keydown', onKey)
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [open, selectedId, layers])
+  }, [open])
 
   // ── 이미지 추가 ──────────────────────
   const addFile = async (file) => {
@@ -315,9 +451,7 @@ export default function CompositeBoard({ open, layers, onLayersChange, config, o
       const dataUrl = await blobToDataUrl(file)
       const dims = await imgDims(dataUrl)
       onAddImage({ dataUrl, name: file.name || '레이어', ...dims })
-    } catch (e) {
-      /* 무시 */
-    }
+    } catch (e) { /* noop */ }
   }
   const addFromHistory = async (item) => {
     if (!resolveItem) return
@@ -326,11 +460,7 @@ export default function CompositeBoard({ open, layers, onLayersChange, config, o
       const payload = await resolveItem(item)
       if (payload) onAddImage(payload)
       setPicker(false)
-    } catch (e) {
-      /* 무시 */
-    } finally {
-      setBusy(false)
-    }
+    } catch (e) { /* noop */ } finally { setBusy(false) }
   }
 
   // ── 내보내기 ─────────────────────────
@@ -338,16 +468,11 @@ export default function CompositeBoard({ open, layers, onLayersChange, config, o
     const isJpeg = format === 'jpeg'
     const c = renderComposite(document.createElement('canvas'), isJpeg)
     if (!c) return
-    c.toBlob(
-      (blob) => blob && downloadBlob(blob, `board-${uid()}.${isJpeg ? 'jpg' : 'png'}`),
-      isJpeg ? 'image/jpeg' : 'image/png',
-      0.92
-    )
+    c.toBlob((blob) => blob && downloadBlob(blob, `board-${uid()}.${isJpeg ? 'jpg' : 'png'}`), isJpeg ? 'image/jpeg' : 'image/png', 0.92)
   }
 
   if (!open) return null
-  const selected = layers.find((l) => l.id === selectedId)
-  const ordered = [...layers].reverse() // 패널: 위가 앞
+  const ordered = [...layers].reverse()
   const setZoomClamped = (z) => setZoom(Math.min(4, Math.max(0.05, z)))
 
   return (
@@ -357,12 +482,15 @@ export default function CompositeBoard({ open, layers, onLayersChange, config, o
         <div style={{ display: 'flex', alignItems: 'center', gap: 12, color: '#fff' }}>
           <span style={{ fontSize: 15, fontWeight: 700 }}>🎨 합성 보드</span>
           <span style={{ fontSize: 12, color: 'rgba(255,255,255,0.5)' }}>레이어 {layers.length}개</span>
+          {cropMode && <span style={{ fontSize: 12, fontWeight: 700, color: '#ffd24a' }}>✂️ Crop 모드 · Enter 적용 / Esc 취소</span>}
         </div>
         <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-          {/* 줌 */}
+          <button onClick={onUndo} disabled={!canUndo} style={topBtn(!canUndo)} title="실행 취소 (⌘/Ctrl+Z)">↶ Undo</button>
+          <button onClick={onRedo} disabled={!canRedo} style={topBtn(!canRedo)} title="다시 실행 (⌘/Ctrl+Shift+Z)">↷ Redo</button>
+          <div style={{ width: 1, height: 22, background: 'rgba(255,255,255,0.12)', margin: '0 2px' }} />
           <div style={{ display: 'flex', alignItems: 'center', gap: 2, marginRight: 6 }}>
             <button onClick={() => setZoomClamped(zoom / 1.25)} style={zoomBtn}>−</button>
-            <span style={{ color: 'rgba(255,255,255,0.8)', fontSize: 12, width: 46, textAlign: 'center' }}>{Math.round(zoom * 100)}%</span>
+            <span style={{ color: 'rgba(255,255,255,0.8)', fontSize: 12, width: 44, textAlign: 'center' }}>{Math.round(zoom * 100)}%</span>
             <button onClick={() => setZoomClamped(zoom * 1.25)} style={zoomBtn}>+</button>
             <button onClick={fitZoom} style={{ ...zoomBtn, width: 'auto', padding: '0 8px', fontSize: 11 }}>맞춤</button>
           </div>
@@ -376,7 +504,6 @@ export default function CompositeBoard({ open, layers, onLayersChange, config, o
         {/* 작업대 */}
         <div ref={workspaceRef} style={{ flex: 1, minWidth: 0, display: 'flex', overflow: 'auto', background: '#3a3a3d' }}>
           <div style={{ margin: 'auto', padding: 28 }}>
-            {/* 사이즈 라벨 */}
             <div style={{ color: 'rgba(255,255,255,0.55)', fontSize: 11, fontWeight: 600, marginBottom: 8, textAlign: 'center' }}>
               {config.w} × {config.h} px · {Math.round(zoom * 100)}%
             </div>
@@ -410,25 +537,37 @@ export default function CompositeBoard({ open, layers, onLayersChange, config, o
 
         {/* 우측 패널 */}
         <div style={{ flex: 'none', width: 300, background: '#ffffff', display: 'flex', flexDirection: 'column', overflowY: 'auto' }}>
-          {/* 보드 설정 */}
           <div style={{ padding: '14px 16px', borderBottom: '1px solid #ebebeb' }}>
             <div style={{ fontSize: 12, fontWeight: 700, color: '#222', marginBottom: 10 }}>아트보드</div>
             <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 10 }}>
-              <input type="number" value={config.w} onChange={(e) => onConfigChange({ ...config, w: Math.max(16, Number(e.target.value) || 16) })} style={numInput} />
+              <input
+                type="number"
+                value={config.w}
+                onFocus={() => { beforeRef.current = { snap: getSnapshot(), w: config.w, h: config.h } }}
+                onChange={(e) => onConfigChange({ ...config, w: Math.max(16, Number(e.target.value) || 16) })}
+                onBlur={() => { const b = beforeRef.current; if (b && (b.w !== config.w || b.h !== config.h)) onCommit(b.snap); beforeRef.current = null }}
+                style={numInput}
+              />
               <span style={{ color: '#6a6a6a' }}>×</span>
-              <input type="number" value={config.h} onChange={(e) => onConfigChange({ ...config, h: Math.max(16, Number(e.target.value) || 16) })} style={numInput} />
+              <input
+                type="number"
+                value={config.h}
+                onFocus={() => { beforeRef.current = { snap: getSnapshot(), w: config.w, h: config.h } }}
+                onChange={(e) => onConfigChange({ ...config, h: Math.max(16, Number(e.target.value) || 16) })}
+                onBlur={() => { const b = beforeRef.current; if (b && (b.w !== config.w || b.h !== config.h)) onCommit(b.snap); beforeRef.current = null }}
+                style={numInput}
+              />
             </div>
             <div style={{ display: 'flex', gap: 6 }}>
               {[{ v: 'transparent', t: '투명' }, { v: 'white', t: '흰색' }, { v: '#111111', t: '검정' }].map((o) => (
-                <button key={o.v} onClick={() => onConfigChange({ ...config, bg: o.v })} style={chip(config.bg === o.v)}>{o.t}</button>
+                <button key={o.v} onClick={() => setBg(o.v)} style={chip(config.bg === o.v)}>{o.t}</button>
               ))}
             </div>
           </div>
 
-          {/* 이미지 추가 */}
           <div style={{ padding: '12px 16px', borderBottom: '1px solid #ebebeb', display: 'flex', gap: 8 }}>
             <button onClick={() => fileRef.current && fileRef.current.click()} style={{ ...addBtn, flex: 1 }}>＋ 업로드</button>
-            <button onClick={() => setPicker((v) => !v)} style={{ ...addBtn, flex: 1, background: picker ? '#fff1eb' : '#fff', borderColor: picker ? '#ff4800' : '#dddddd', color: picker ? '#ff4800' : '#222' }}>＋ 기록에서</button>
+            <button onClick={() => setPicker((v) => !v)} style={{ ...addBtn, flex: 1, background: picker ? '#fff1eb' : '#fff', border: '1px solid ' + (picker ? '#ff4800' : '#dddddd'), color: picker ? '#ff4800' : '#222' }}>＋ 기록에서</button>
             <input ref={fileRef} type="file" accept="image/*" multiple style={{ display: 'none' }} onChange={(e) => { Array.from(e.target.files || []).forEach(addFile); e.target.value = '' }} />
           </div>
 
@@ -446,48 +585,65 @@ export default function CompositeBoard({ open, layers, onLayersChange, config, o
             </div>
           )}
 
-          {/* 레이어 목록 */}
           <div style={{ flex: 1, minHeight: 0, padding: '12px 16px' }}>
             <div style={{ fontSize: 12, fontWeight: 700, color: '#222', marginBottom: 10 }}>레이어 <span style={{ fontWeight: 400, color: '#6a6a6a' }}>(위가 앞)</span></div>
             {layers.length === 0 && <div style={{ fontSize: 12, color: '#6a6a6a', lineHeight: 1.6 }}>이미지를 추가해 레이어를 쌓아 보세요.</div>}
             <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
               {ordered.map((l) => (
-                <div
-                  key={l.id}
-                  onClick={() => setSelectedId(l.id)}
-                  style={{ display: 'flex', alignItems: 'center', gap: 8, padding: 6, borderRadius: 10, cursor: 'pointer', border: '1px solid ' + (selectedId === l.id ? '#2563eb' : '#ebebeb'), background: selectedId === l.id ? '#eff5ff' : '#fff' }}
-                >
+                <div key={l.id} onClick={() => onSelect(l.id)} style={{ display: 'flex', alignItems: 'center', gap: 8, padding: 6, borderRadius: 10, cursor: 'pointer', border: '1px solid ' + (selectedId === l.id ? '#2563eb' : '#ebebeb'), background: selectedId === l.id ? '#eff5ff' : '#fff' }}>
                   <img src={l.src} alt="" style={{ width: 36, height: 36, objectFit: 'cover', borderRadius: 6, flex: 'none', background: '#f7f7f7' }} />
                   <div style={{ flex: 1, minWidth: 0 }}>
                     <div style={{ fontSize: 12, fontWeight: 600, color: '#222', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{l.name || '레이어'}</div>
                     <div style={{ fontSize: 10, color: '#6a6a6a' }}>{BLEND_MODES.find((b) => b.value === (l.blend || 'source-over'))?.label}</div>
                   </div>
-                  <button onClick={(e) => { e.stopPropagation(); update(l.id, (x) => ({ visible: !x.visible })) }} title="표시/숨김" style={iconBtn}>{l.visible ? '👁' : '🚫'}</button>
+                  <button onClick={(e) => { e.stopPropagation(); toggleVisible(l.id) }} title="표시/숨김" style={iconBtn}>{l.visible ? '👁' : '🚫'}</button>
                 </div>
               ))}
             </div>
           </div>
 
-          {/* 선택 레이어 컨트롤 */}
           {selected && (
             <div style={{ flex: 'none', padding: '14px 16px', borderTop: '1px solid #ebebeb', background: '#fafafa' }}>
               <div style={{ fontSize: 12, fontWeight: 700, color: '#222', marginBottom: 10 }}>선택한 레이어</div>
+
+              {/* Crop */}
+              {cropMode ? (
+                <div style={{ display: 'flex', gap: 6, marginBottom: 12 }}>
+                  <button onClick={applyCrop} style={{ ...miniBtn, background: '#ff4800', color: '#fff', border: '1px solid #ff4800' }}>적용 (Enter)</button>
+                  <button onClick={cancelCrop} style={miniBtn}>취소 (Esc)</button>
+                </div>
+              ) : (
+                <div style={{ display: 'flex', gap: 6, marginBottom: 12 }}>
+                  <button onClick={enterCrop} style={miniBtn}>✂️ Crop (C)</button>
+                  <button onClick={resetCrop} style={miniBtn}>Crop 초기화</button>
+                </div>
+              )}
+
               <label style={lbl}>블렌딩 모드</label>
-              <select value={selected.blend || 'source-over'} onChange={(e) => update(selected.id, { blend: e.target.value })} style={{ width: '100%', border: '1px solid #dddddd', borderRadius: 10, padding: '9px 10px', fontSize: 13, color: '#222', marginBottom: 12, background: '#fff' }}>
+              <select value={selected.blend || 'source-over'} onChange={(e) => setBlend(selected.id, e.target.value)} style={{ width: '100%', border: '1px solid #dddddd', borderRadius: 10, padding: '9px 10px', fontSize: 13, color: '#222', marginBottom: 12, background: '#fff' }}>
                 {BLEND_MODES.map((b) => (<option key={b.value} value={b.value}>{b.label}</option>))}
               </select>
               <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 4 }}>
                 <label style={lbl}>불투명도</label>
                 <span style={{ fontSize: 11, color: '#6a6a6a' }}>{Math.round((selected.opacity == null ? 1 : selected.opacity) * 100)}%</span>
               </div>
-              <input type="range" min="0" max="100" value={Math.round((selected.opacity == null ? 1 : selected.opacity) * 100)} onChange={(e) => update(selected.id, { opacity: Number(e.target.value) / 100 })} style={{ width: '100%', accentColor: '#2563eb', marginBottom: 10 }} />
+              <input
+                type="range"
+                min="0"
+                max="100"
+                value={Math.round((selected.opacity == null ? 1 : selected.opacity) * 100)}
+                onPointerDown={() => { beforeRef.current = { snap: getSnapshot() } }}
+                onChange={(e) => update(selected.id, { opacity: Number(e.target.value) / 100 })}
+                onPointerUp={() => { if (beforeRef.current) { onCommit(beforeRef.current.snap); beforeRef.current = null } }}
+                style={{ width: '100%', accentColor: '#2563eb', marginBottom: 10 }}
+              />
               <div style={{ fontSize: 10, color: '#8a8a8a', marginBottom: 10, lineHeight: 1.5 }}>
-                코너 드래그=비율 유지 · Shift=자유 · 방향키=1px(Shift 10px) · Del=삭제 · ⌘/Ctrl+T=변형
+                코너=비율유지 · Shift=자유 · 방향키 1px(Shift 10) · C=Crop · Del=삭제 · ⌘/Ctrl+Z=실행취소
               </div>
               <div style={{ display: 'flex', gap: 6 }}>
-                <button onClick={() => move(selected.id, 'up')} style={miniBtn}>앞으로</button>
-                <button onClick={() => move(selected.id, 'down')} style={miniBtn}>뒤로</button>
-                <button onClick={() => removeLayer(selected.id)} style={{ ...miniBtn, color: '#d4351c', borderColor: '#f0c9c0' }}>삭제</button>
+                <button onClick={() => moveOrder(selected.id, 'up')} style={miniBtn}>앞으로</button>
+                <button onClick={() => moveOrder(selected.id, 'down')} style={miniBtn}>뒤로</button>
+                <button onClick={() => removeLayer(selected.id)} style={{ ...miniBtn, color: '#d4351c', border: '1px solid #f0c9c0' }}>삭제</button>
               </div>
             </div>
           )}
@@ -507,6 +663,7 @@ function imgDims(src) {
 }
 
 const btn = (bg) => ({ background: bg, color: '#fff', border: 'none', borderRadius: 8, padding: '8px 13px', fontSize: 13, fontWeight: 700, cursor: 'pointer' })
+const topBtn = (disabled) => ({ background: 'transparent', color: disabled ? 'rgba(255,255,255,0.3)' : '#fff', border: '1px solid rgba(255,255,255,0.2)', borderRadius: 7, padding: '6px 10px', fontSize: 12, fontWeight: 600, cursor: disabled ? 'default' : 'pointer' })
 const zoomBtn = { width: 26, height: 26, borderRadius: 6, border: '1px solid rgba(255,255,255,0.2)', background: 'transparent', color: '#fff', fontSize: 14, cursor: 'pointer', lineHeight: 1 }
 const numInput = { width: '100%', border: '1px solid #dddddd', borderRadius: 8, padding: '7px 9px', fontSize: 13, color: '#222' }
 const chip = (active) => ({ flex: 1, border: '1px solid ' + (active ? '#ff4800' : '#dddddd'), background: active ? '#fff1eb' : '#fff', color: active ? '#ff4800' : '#222', borderRadius: 8, padding: '7px 4px', fontSize: 12, fontWeight: 600, cursor: 'pointer' })

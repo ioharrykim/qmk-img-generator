@@ -171,10 +171,13 @@ export default function App() {
   const [passwordModalOpen, setPasswordModalOpen] = useState(false)
   const [passwordPrompt, setPasswordPrompt] = useState(false)
 
-  // 합성 보드 (레이어/블렌딩)
+  // 합성 보드 (레이어/블렌딩) + undo/redo 히스토리
   const [boardOpen, setBoardOpen] = useState(false)
   const [boardLayers, setBoardLayers] = useState([])
   const [boardConfig, setBoardConfig] = useState({ w: 1024, h: 1024, bg: 'transparent' })
+  const [boardSelectedId, setBoardSelectedId] = useState(null)
+  const [boardUndo, setBoardUndo] = useState([])
+  const [boardRedo, setBoardRedo] = useState([])
 
   // 설정 저장
   useEffect(() => {
@@ -588,9 +591,41 @@ export default function App() {
     }
   }
 
-  // ── 합성 보드 ───────────────────────────────
+  // ── 합성 보드 + 히스토리 ─────────────────────
+  const HISTORY_MAX = 50
+  // 편집 메타데이터만 snapshot (Image/File 원본은 src 문자열로 참조 유지)
+  const snapshotBoard = () => ({
+    layers: boardLayers.map((l) => ({ ...l, crop: l.crop ? { ...l.crop } : null })),
+    config: { ...boardConfig },
+    selectedId: boardSelectedId,
+  })
+  const commitBoard = (before) => {
+    setBoardUndo((u) => [...u, before].slice(-HISTORY_MAX))
+    setBoardRedo([])
+  }
+  const applyBoardSnapshot = (s) => {
+    setBoardLayers(s.layers.map((l) => ({ ...l, crop: l.crop ? { ...l.crop } : null })))
+    setBoardConfig({ ...s.config })
+    setBoardSelectedId(s.selectedId)
+  }
+  const boardUndoAction = () => {
+    if (!boardUndo.length) return
+    const prev = boardUndo[boardUndo.length - 1]
+    setBoardRedo((r) => [...r, snapshotBoard()].slice(-HISTORY_MAX))
+    setBoardUndo((u) => u.slice(0, -1))
+    applyBoardSnapshot(prev)
+  }
+  const boardRedoAction = () => {
+    if (!boardRedo.length) return
+    const next = boardRedo[boardRedo.length - 1]
+    setBoardUndo((u) => [...u, snapshotBoard()].slice(-HISTORY_MAX))
+    setBoardRedo((r) => r.slice(0, -1))
+    applyBoardSnapshot(next)
+  }
+
   const addBoardLayer = ({ dataUrl, name, width, height }) => {
     if (!dataUrl) return
+    const before = snapshotBoard()
     const aspect = width && height ? width / height : 1
     const isFirst = boardLayers.length === 0
     let cfg = boardConfig
@@ -598,16 +633,21 @@ export default function App() {
       cfg = { ...boardConfig, w: width, h: height }
       setBoardConfig(cfg)
     }
+    const natW = width || cfg.w
+    const natH = height || cfg.h
+    const crop = { sx: 0, sy: 0, sw: natW, sh: natH }
     let layer
     if (isFirst) {
-      layer = { id: uid(), name: name || '레이어', src: dataUrl, x: 0, y: 0, w: cfg.w, h: cfg.h, aspect, opacity: 1, blend: 'source-over', visible: true }
+      layer = { id: uid(), name: name || '레이어', src: dataUrl, x: 0, y: 0, w: cfg.w, h: cfg.h, aspect, rotation: 0, opacity: 1, blend: 'source-over', visible: true, crop }
     } else {
-      const s = Math.min((cfg.w * 0.8) / (width || cfg.w), (cfg.h * 0.8) / (height || cfg.h), 1)
-      const w = (width || cfg.w) * s
-      const h = (height || cfg.h) * s
-      layer = { id: uid(), name: name || '레이어', src: dataUrl, x: (cfg.w - w) / 2, y: (cfg.h - h) / 2, w, h, aspect, opacity: 1, blend: 'source-over', visible: true }
+      const s = Math.min((cfg.w * 0.8) / natW, (cfg.h * 0.8) / natH, 1)
+      const w = natW * s
+      const h = natH * s
+      layer = { id: uid(), name: name || '레이어', src: dataUrl, x: (cfg.w - w) / 2, y: (cfg.h - h) / 2, w, h, aspect, rotation: 0, opacity: 1, blend: 'source-over', visible: true, crop }
     }
     setBoardLayers((prev) => [...prev, layer])
+    setBoardSelectedId(layer.id)
+    commitBoard(before)
   }
 
   const resolveItemForBoard = async (item) => {
@@ -874,6 +914,14 @@ export default function App() {
         onLayersChange={setBoardLayers}
         config={boardConfig}
         onConfigChange={setBoardConfig}
+        selectedId={boardSelectedId}
+        onSelect={setBoardSelectedId}
+        getSnapshot={snapshotBoard}
+        onCommit={commitBoard}
+        onUndo={boardUndoAction}
+        onRedo={boardRedoAction}
+        canUndo={boardUndo.length > 0}
+        canRedo={boardRedo.length > 0}
         history={history}
         resolveItem={resolveItemForBoard}
         onAddImage={addBoardLayer}
