@@ -651,8 +651,8 @@ export default function CompositeBoard({
       }
       if (st.maskMode) {
         if (e.key === 'Escape') { e.preventDefault(); st.exitMask() }
-        else if (e.key === '+' || e.key === '=') { e.preventDefault(); st.setBrushSizeSafe((v) => v + BRUSH_STEP) }
-        else if (e.key === '-' || e.key === '_') { e.preventDefault(); st.setBrushSizeSafe((v) => v - BRUSH_STEP) }
+        else if (e.key === ']') { e.preventDefault(); st.setBrushSizeSafe((v) => v + BRUSH_STEP) }
+        else if (e.key === '[') { e.preventDefault(); st.setBrushSizeSafe((v) => v - BRUSH_STEP) }
         return
       }
       if ((e.key === 'c' || e.key === 'C') && !mod && st.selected) { e.preventDefault(); st.enterCrop(); return }
@@ -711,6 +711,11 @@ export default function CompositeBoard({
   if (!open) return null
   const ordered = [...layers].reverse()
   const setZoomClamped = (z) => setZoom(Math.min(4, Math.max(0.05, z)))
+  const clearSelectionFromWorkspace = (e) => {
+    if (overlayRef.current && overlayRef.current.contains(e.target)) return
+    onSelect(null)
+    setCursor('default')
+  }
 
   return (
     <div style={{ position: 'fixed', inset: 0, zIndex: 90, background: '#2b2b2e', display: 'flex', flexDirection: 'column' }}>
@@ -720,7 +725,7 @@ export default function CompositeBoard({
           <span style={{ fontSize: 15, fontWeight: 700 }}>🎨 합성 보드</span>
           <span style={{ fontSize: 12, color: 'rgba(255,255,255,0.5)' }}>레이어 {layers.length}개</span>
           {cropMode && <span style={{ fontSize: 12, fontWeight: 700, color: '#ffd24a' }}>✂️ Crop 모드 · Enter 적용 / Esc 취소</span>}
-          {maskMode && <span style={{ fontSize: 12, fontWeight: 700, color: '#fdba74' }}>🖌️ 마스크 모드 · 드래그로 지우기 · -/+ 크기 · Esc 종료</span>}
+          {maskMode && <span style={{ fontSize: 12, fontWeight: 700, color: '#fdba74' }}>🖌️ 마스크 모드 · 드래그로 지우기 · [ 작게 · ] 크게 · Esc 종료</span>}
         </div>
         <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
           <button onClick={onUndo} disabled={!canUndo} style={topBtn(!canUndo)} title="실행 취소 (⌘/Ctrl+Z)">↶ Undo</button>
@@ -740,7 +745,7 @@ export default function CompositeBoard({
 
       <div style={{ flex: 1, minHeight: 0, display: 'flex' }}>
         {/* 작업대 */}
-        <div ref={workspaceRef} style={{ flex: 1, minWidth: 0, display: 'flex', overflow: 'auto', background: '#3a3a3d' }}>
+        <div ref={workspaceRef} onPointerDown={clearSelectionFromWorkspace} style={{ flex: 1, minWidth: 0, display: 'flex', overflow: 'auto', background: '#3a3a3d' }}>
           <div style={{ margin: 'auto', padding: 28 }}>
             <div style={{ color: 'rgba(255,255,255,0.55)', fontSize: 11, fontWeight: 600, marginBottom: 8, textAlign: 'center' }}>
               {config.w} × {config.h} px · {Math.round(zoom * 100)}%
@@ -913,7 +918,7 @@ export default function CompositeBoard({
                 style={{ width: '100%', accentColor: '#2563eb', marginBottom: 10 }}
               />
               <div style={{ fontSize: 10, color: '#8a8a8a', marginBottom: 10, lineHeight: 1.5 }}>
-                코너=비율유지 · Shift=자유 · 방향키 1px(Shift 10) · C=Crop · M=마스크 · -/+=브러쉬 크기 · Del=삭제 · ⌘/Ctrl+Z=실행취소
+                코너=비율유지 · Shift=자유 · 방향키 1px(Shift 10) · C=Crop · M=마스크 · [/] 브러쉬 크기 · Del=삭제 · ⌘/Ctrl+Z=실행취소
               </div>
               <div style={{ display: 'flex', gap: 6 }}>
                 <button onClick={() => moveOrder(selected.id, 'up')} style={miniBtn}>앞으로</button>
