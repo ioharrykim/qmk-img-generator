@@ -3,6 +3,7 @@ import { downloadBlob, blobToDataUrl, uid } from '../utils'
 
 // 포토샵 웹 느낌의 레이어 합성 보드 (100% 클라이언트, OpenAI 미사용)
 // - 블렌딩(globalCompositeOperation), 이동/리사이즈, 비파괴 crop, undo/redo
+// - 레이어 마스크(브러쉬로 비파괴 지우기)
 // 히스토리(layers/config/selectedId)는 App 이 소유 — 여기선 onCommit/getSnapshot 으로 기록.
 
 const BLEND_MODES = [
@@ -27,10 +28,83 @@ const BLEND_MODES = [
 const HANDLE_KEYS = ['nw', 'n', 'ne', 'e', 'se', 's', 'sw', 'w']
 const CURSORS = { nw: 'nwse-resize', se: 'nwse-resize', ne: 'nesw-resize', sw: 'nesw-resize', n: 'ns-resize', s: 'ns-resize', e: 'ew-resize', w: 'ew-resize' }
 const CROP_MIN = 10
+const BRUSH_MIN = 8
+const BRUSH_MAX = 240
+const BRUSH_STEP = 8
+const BRUSH_TYPES = [
+  { value: 'soft', label: '원형 소프트' },
+  { value: 'hard', label: '원형 기본' },
+]
 
 function cropOf(l, img) {
   if (l.crop && l.crop.sw > 0 && l.crop.sh > 0) return l.crop
   return { sx: 0, sy: 0, sw: img ? img.naturalWidth : l.w, sh: img ? img.naturalHeight : l.h }
+}
+
+function clamp(v, min, max) {
+  return Math.max(min, Math.min(max, v))
+}
+
+function localPointForLayer(l, p) {
+  const rot = l.rotation || 0
+  if (!rot) return { x: p.x - l.x, y: p.y - l.y }
+  const cx = l.x + l.w / 2
+  const cy = l.y + l.h / 2
+  const rad = (-rot * Math.PI) / 180
+  const dx = p.x - cx
+  const dy = p.y - cy
+  return {
+    x: dx * Math.cos(rad) - dy * Math.sin(rad) + l.w / 2,
+    y: dx * Math.sin(rad) + dy * Math.cos(rad) + l.h / 2,
+  }
+}
+
+function maskPointForLayer(l, p, cr) {
+  const local = localPointForLayer(l, p)
+  if (local.x < 0 || local.y < 0 || local.x > l.w || local.y > l.h) return null
+  return {
+    x: cr.sx + (local.x / Math.max(1, l.w)) * cr.sw,
+    y: cr.sy + (local.y / Math.max(1, l.h)) * cr.sh,
+  }
+}
+
+function brushRadiusForLayer(l, cr, size) {
+  return {
+    rx: (size / 2) * (l.w / Math.max(1, cr.sw)),
+    ry: (size / 2) * (l.h / Math.max(1, cr.sh)),
+  }
+}
+
+function paintMaskStamp(ctx, p, size, type) {
+  const r = size / 2
+  ctx.save()
+  ctx.globalCompositeOperation = 'destination-out'
+  if (type === 'soft') {
+    const g = ctx.createRadialGradient(p.x, p.y, 0, p.x, p.y, r)
+    g.addColorStop(0, 'rgba(0,0,0,0.85)')
+    g.addColorStop(0.55, 'rgba(0,0,0,0.45)')
+    g.addColorStop(1, 'rgba(0,0,0,0)')
+    ctx.fillStyle = g
+  } else {
+    ctx.fillStyle = '#000000'
+  }
+  ctx.beginPath()
+  ctx.arc(p.x, p.y, r, 0, Math.PI * 2)
+  ctx.fill()
+  ctx.restore()
+}
+
+function paintMaskStroke(canvas, from, to, size, type) {
+  const ctx = canvas.getContext('2d')
+  const dx = to.x - from.x
+  const dy = to.y - from.y
+  const dist = Math.hypot(dx, dy)
+  const step = Math.max(1, size / 4)
+  const count = Math.max(1, Math.ceil(dist / step))
+  for (let i = 0; i <= count; i++) {
+    const t = i / count
+    paintMaskStamp(ctx, { x: from.x + dx * t, y: from.y + dy * t }, size, type)
+  }
 }
 
 // 공통 사각형 리사이즈 (transform: 비율옵션 / crop: bounds 제한)
@@ -80,6 +154,7 @@ export default function CompositeBoard({
   const overlayRef = useRef(null)
   const workspaceRef = useRef(null)
   const cacheRef = useRef(new Map())
+  const maskCacheRef = useRef(new Map())
   const fileRef = useRef(null)
   const dragRef = useRef(null)
   const beforeRef = useRef(null) // 슬라이더/사이즈 입력용 임시 snapshot
@@ -90,6 +165,10 @@ export default function CompositeBoard({
   const [cursor, setCursor] = useState('default')
   const [cropMode, setCropMode] = useState(false)
   const [cropDraft, setCropDraft] = useState(null) // {x,y,w,h} (보드 좌표)
+  const [maskMode, setMaskMode] = useState(false)
+  const [maskCursor, setMaskCursor] = useState(null)
+  const [brushType, setBrushType] = useState('soft')
+  const [brushSize, setBrushSize] = useState(56)
 
   const selected = layers.find((l) => l.id === selectedId)
 
@@ -139,11 +218,47 @@ export default function CompositeBoard({
   }, [cropMode])
   useEffect(() => {
     setCropMode(false)
+    setMaskMode(false)
+    setMaskCursor(null)
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [selectedId])
 
   const update = (id, patch) =>
     onLayersChange((prev) => prev.map((l) => (l.id === id ? { ...l, ...(typeof patch === 'function' ? patch(l) : patch) } : l)))
+
+  const setBrushSizeSafe = (next) => setBrushSize((cur) => clamp(typeof next === 'function' ? next(cur) : next, BRUSH_MIN, BRUSH_MAX))
+
+  const getMaskEntry = (layer, img, create = false) => {
+    if (!layer || !img) return null
+    const w = layer.mask?.width || img.naturalWidth
+    const h = layer.mask?.height || img.naturalHeight
+    const key = layer.mask?.dataUrl || `full:${w}x${h}`
+    const existing = maskCacheRef.current.get(layer.id)
+    if (existing && existing.key === key && existing.canvas.width === w && existing.canvas.height === h) return existing
+    if (!create && !layer.mask) return existing || null
+
+    const canvas = document.createElement('canvas')
+    canvas.width = w
+    canvas.height = h
+    const ctx = canvas.getContext('2d')
+    ctx.fillStyle = '#ffffff'
+    ctx.fillRect(0, 0, w, h)
+    const entry = { canvas, key, width: w, height: h }
+    maskCacheRef.current.set(layer.id, entry)
+
+    if (layer.mask?.dataUrl) {
+      const maskImg = new Image()
+      maskImg.onload = () => {
+        const current = maskCacheRef.current.get(layer.id)
+        if (current !== entry) return
+        ctx.clearRect(0, 0, w, h)
+        ctx.drawImage(maskImg, 0, 0, w, h)
+        setTick((t) => t + 1)
+      }
+      maskImg.src = layer.mask.dataUrl
+    }
+    return entry
+  }
 
   // ── 렌더 (preview = export 동일 경로, crop rect 반영) ──
   const renderComposite = (canvas, jpegBg) => {
@@ -163,6 +278,18 @@ export default function CompositeBoard({
       const img = cacheRef.current.get(l.src)
       if (!img) continue
       const cr = cropOf(l, img)
+      const maskEntry = getMaskEntry(l, img, false)
+      const layerCanvas = document.createElement('canvas')
+      layerCanvas.width = Math.max(1, Math.round(l.w))
+      layerCanvas.height = Math.max(1, Math.round(l.h))
+      const layerCtx = layerCanvas.getContext('2d')
+      layerCtx.drawImage(img, cr.sx, cr.sy, cr.sw, cr.sh, 0, 0, layerCanvas.width, layerCanvas.height)
+      if (maskEntry) {
+        layerCtx.save()
+        layerCtx.globalCompositeOperation = 'destination-in'
+        layerCtx.drawImage(maskEntry.canvas, cr.sx, cr.sy, cr.sw, cr.sh, 0, 0, layerCanvas.width, layerCanvas.height)
+        layerCtx.restore()
+      }
       ctx.save()
       ctx.globalAlpha = l.opacity == null ? 1 : l.opacity
       ctx.globalCompositeOperation = l.blend || 'source-over'
@@ -170,9 +297,9 @@ export default function CompositeBoard({
       if (rot) {
         ctx.translate(l.x + l.w / 2, l.y + l.h / 2)
         ctx.rotate((rot * Math.PI) / 180)
-        ctx.drawImage(img, cr.sx, cr.sy, cr.sw, cr.sh, -l.w / 2, -l.h / 2, l.w, l.h)
+        ctx.drawImage(layerCanvas, -l.w / 2, -l.h / 2, l.w, l.h)
       } else {
-        ctx.drawImage(img, cr.sx, cr.sy, cr.sw, cr.sh, l.x, l.y, l.w, l.h)
+        ctx.drawImage(layerCanvas, l.x, l.y, l.w, l.h)
       }
       ctx.restore()
     }
@@ -221,6 +348,41 @@ export default function CompositeBoard({
     const ctx = o.getContext('2d')
     ctx.clearRect(0, 0, o.width, o.height)
     const s = boardScale()
+    if (maskMode && selected) {
+      ctx.strokeStyle = '#f97316'
+      ctx.lineWidth = 1.5 * s
+      ctx.setLineDash([6 * s, 4 * s])
+      ctx.strokeRect(selected.x, selected.y, selected.w, selected.h)
+      ctx.setLineDash([])
+      if (maskCursor) {
+        const img = cacheRef.current.get(selected.src)
+        const cr = cropOf(selected, img)
+        const { rx, ry } = brushRadiusForLayer(selected, cr, brushSize)
+        const rot = ((selected.rotation || 0) * Math.PI) / 180
+        ctx.strokeStyle = '#ffffff'
+        ctx.lineWidth = 1.5 * s
+        ctx.save()
+        ctx.translate(maskCursor.x, maskCursor.y)
+        ctx.rotate(rot)
+        ctx.beginPath()
+        ctx.ellipse(0, 0, rx, ry, 0, 0, Math.PI * 2)
+        ctx.stroke()
+        ctx.strokeStyle = 'rgba(0,0,0,0.55)'
+        ctx.lineWidth = 1 * s
+        ctx.beginPath()
+        ctx.ellipse(0, 0, rx + 1.5 * s, ry + 1.5 * s, 0, 0, Math.PI * 2)
+        ctx.stroke()
+        if (brushType === 'soft') {
+          ctx.strokeStyle = 'rgba(255,255,255,0.45)'
+          ctx.lineWidth = 1 * s
+          ctx.beginPath()
+          ctx.ellipse(0, 0, rx * 0.5, ry * 0.5, 0, 0, Math.PI * 2)
+          ctx.stroke()
+        }
+        ctx.restore()
+      }
+      return
+    }
     if (cropMode && selected && cropDraft) {
       const L = selected
       const d = cropDraft
@@ -253,7 +415,7 @@ export default function CompositeBoard({
   useEffect(() => {
     if (open) renderOverlay()
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [layers, selectedId, config, tick, open, zoom, cropMode, cropDraft])
+  }, [layers, selectedId, config, tick, open, zoom, cropMode, cropDraft, maskMode, maskCursor, brushSize, brushType])
 
   // ── 좌표/히트테스트 ───────────────────
   const toBoard = (e) => {
@@ -274,6 +436,21 @@ export default function CompositeBoard({
     e.preventDefault()
     try { overlayRef.current.setPointerCapture?.(e.pointerId) } catch (err) { /* noop */ }
     const p = toBoard(e)
+
+    if (maskMode && selected) {
+      const img = cacheRef.current.get(selected.src)
+      const cr = cropOf(selected, img)
+      const mp = maskPointForLayer(selected, p, cr)
+      if (!img || !mp) return
+      const entry = getMaskEntry(selected, img, true)
+      if (!entry) return
+      const before = getSnapshot()
+      paintMaskStroke(entry.canvas, mp, mp, brushSize, brushType)
+      dragRef.current = { type: 'mask-paint', id: selected.id, before, last: mp, painted: true }
+      setMaskCursor(p)
+      setTick((t) => t + 1)
+      return
+    }
 
     if (cropMode && selected && cropDraft) {
       const k = hitHandle(cropDraft, p)
@@ -300,6 +477,14 @@ export default function CompositeBoard({
   const onPointerMove = (e) => {
     const d = dragRef.current
     if (!d) {
+      if (maskMode && selected) {
+        const p = toBoard(e)
+        const img = cacheRef.current.get(selected.src)
+        const mp = img ? maskPointForLayer(selected, p, cropOf(selected, img)) : null
+        setMaskCursor(mp ? p : null)
+        setCursor(mp ? 'crosshair' : 'default')
+        return
+      }
       const ref = cropMode ? cropDraft : selected && selected.visible ? selected : null
       if (ref) {
         const p = toBoard(e)
@@ -309,7 +494,19 @@ export default function CompositeBoard({
       return
     }
     const p = toBoard(e)
-    if (d.type === 'crop-move') {
+    if (d.type === 'mask-paint') {
+      const L = layers.find((l) => l.id === d.id)
+      const img = L && cacheRef.current.get(L.src)
+      const mp = img ? maskPointForLayer(L, p, cropOf(L, img)) : null
+      const entry = L && img ? getMaskEntry(L, img, true) : null
+      if (mp && entry) {
+        paintMaskStroke(entry.canvas, d.last || mp, mp, brushSize, brushType)
+        d.last = mp
+        d.painted = true
+        setMaskCursor(p)
+        setTick((t) => t + 1)
+      }
+    } else if (d.type === 'crop-move') {
       const L = selected
       let nx = p.x - d.offX, ny = p.y - d.offY
       nx = Math.max(L.x, Math.min(nx, L.x + L.w - cropDraft.w))
@@ -331,6 +528,16 @@ export default function CompositeBoard({
     const d = dragRef.current
     dragRef.current = null
     try { overlayRef.current.releasePointerCapture?.(e.pointerId) } catch (err) { /* noop */ }
+    if (d && d.type === 'mask-paint') {
+      const entry = maskCacheRef.current.get(d.id)
+      if (d.painted && entry && d.before) {
+        const dataUrl = entry.canvas.toDataURL('image/png')
+        entry.key = dataUrl
+        update(d.id, { mask: { dataUrl, width: entry.canvas.width, height: entry.canvas.height } })
+        onCommit(d.before)
+      }
+      return
+    }
     if (d && (d.type === 'move' || d.type === 'resize') && d.moved && d.before) onCommit(d.before)
   }
 
@@ -370,6 +577,29 @@ export default function CompositeBoard({
     setCropMode(false)
   }
 
+  // ── 레이어 마스크 ─────────────────────
+  const enterMask = () => {
+    if (!selected) return
+    const img = cacheRef.current.get(selected.src)
+    if (!img) return
+    getMaskEntry(selected, img, true)
+    setCropMode(false)
+    setMaskCursor(null)
+    setMaskMode(true)
+  }
+  const exitMask = () => {
+    setMaskMode(false)
+    setMaskCursor(null)
+  }
+  const resetMask = () => {
+    if (!selected) return
+    const before = getSnapshot()
+    maskCacheRef.current.delete(selected.id)
+    update(selected.id, { mask: null })
+    onCommit(before)
+    setTick((t) => t + 1)
+  }
+
   // ── 레이어 조작 (히스토리 포함) ────────
   const removeLayer = (id) =>
     commitAct(() => {
@@ -394,7 +624,7 @@ export default function CompositeBoard({
 
   // ── 키보드 (단일 바인딩 + 최신 상태 ref) ──
   const stateRef = useRef({})
-  stateRef.current = { selected, selectedId, layers, cropMode, cropDraft, canUndo, canRedo, applyCrop, cancelCrop, enterCrop, removeLayer, update, getSnapshot, onCommit, onUndo, onRedo, onSelect, onClose }
+  stateRef.current = { selected, selectedId, layers, cropMode, cropDraft, maskMode, canUndo, canRedo, applyCrop, cancelCrop, enterCrop, enterMask, exitMask, removeLayer, update, getSnapshot, onCommit, onUndo, onRedo, onSelect, onClose, setBrushSizeSafe }
   useEffect(() => {
     if (!open) return
     const onKey = (e) => {
@@ -419,7 +649,14 @@ export default function CompositeBoard({
         else if (e.key === 'Escape') { e.preventDefault(); st.cancelCrop() }
         return
       }
+      if (st.maskMode) {
+        if (e.key === 'Escape') { e.preventDefault(); st.exitMask() }
+        else if (e.key === '+' || e.key === '=') { e.preventDefault(); st.setBrushSizeSafe((v) => v + BRUSH_STEP) }
+        else if (e.key === '-' || e.key === '_') { e.preventDefault(); st.setBrushSizeSafe((v) => v - BRUSH_STEP) }
+        return
+      }
       if ((e.key === 'c' || e.key === 'C') && !mod && st.selected) { e.preventDefault(); st.enterCrop(); return }
+      if ((e.key === 'm' || e.key === 'M') && !mod && st.selected) { e.preventDefault(); st.enterMask(); return }
       if (e.key === 'Escape') {
         if (st.selectedId) st.onSelect(null)
         else st.onClose()
@@ -483,6 +720,7 @@ export default function CompositeBoard({
           <span style={{ fontSize: 15, fontWeight: 700 }}>🎨 합성 보드</span>
           <span style={{ fontSize: 12, color: 'rgba(255,255,255,0.5)' }}>레이어 {layers.length}개</span>
           {cropMode && <span style={{ fontSize: 12, fontWeight: 700, color: '#ffd24a' }}>✂️ Crop 모드 · Enter 적용 / Esc 취소</span>}
+          {maskMode && <span style={{ fontSize: 12, fontWeight: 700, color: '#fdba74' }}>🖌️ 마스크 모드 · 드래그로 지우기 · -/+ 크기 · Esc 종료</span>}
         </div>
         <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
           <button onClick={onUndo} disabled={!canUndo} style={topBtn(!canUndo)} title="실행 취소 (⌘/Ctrl+Z)">↶ Undo</button>
@@ -619,6 +857,43 @@ export default function CompositeBoard({
                 </div>
               )}
 
+              {/* Layer mask */}
+              <div style={{ marginBottom: 12, padding: 10, border: '1px solid #e2e2e2', borderRadius: 10, background: maskMode ? '#fff7ed' : '#fff' }}>
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 8 }}>
+                  <label style={lbl}>레이어 마스크</label>
+                  <span style={{ fontSize: 10, color: maskMode ? '#ea580c' : '#8a8a8a', fontWeight: 700 }}>{maskMode ? '브러쉬 활성' : '비파괴 지우기'}</span>
+                </div>
+                <div style={{ display: 'flex', gap: 6, marginBottom: 8 }}>
+                  {maskMode ? (
+                    <button onClick={exitMask} style={{ ...miniBtn, background: '#f97316', color: '#fff', border: '1px solid #f97316' }}>마스크 종료 (Esc)</button>
+                  ) : (
+                    <button onClick={enterMask} style={miniBtn}>브러쉬 마스크 (M)</button>
+                  )}
+                  <button onClick={resetMask} style={{ ...miniBtn, color: '#b45309', border: '1px solid #fed7aa' }}>마스크 초기화</button>
+                </div>
+                <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 6, marginBottom: 8 }}>
+                  {BRUSH_TYPES.map((b) => (
+                    <button
+                      key={b.value}
+                      onClick={() => setBrushType(b.value)}
+                      style={{
+                        ...miniBtn,
+                        background: brushType === b.value ? '#fff1eb' : '#fff',
+                        color: brushType === b.value ? '#f97316' : '#222',
+                        border: '1px solid ' + (brushType === b.value ? '#f97316' : '#dddddd'),
+                      }}
+                    >
+                      {b.label}
+                    </button>
+                  ))}
+                </div>
+                <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                  <button onClick={() => setBrushSizeSafe((v) => v - BRUSH_STEP)} style={{ ...miniBtn, flex: 'none', width: 38 }}>−</button>
+                  <div style={{ flex: 1, height: 34, border: '1px solid #dddddd', borderRadius: 8, display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 12, fontWeight: 700, color: '#222', background: '#fff' }}>{brushSize}px</div>
+                  <button onClick={() => setBrushSizeSafe((v) => v + BRUSH_STEP)} style={{ ...miniBtn, flex: 'none', width: 38 }}>＋</button>
+                </div>
+              </div>
+
               <label style={lbl}>블렌딩 모드</label>
               <select value={selected.blend || 'source-over'} onChange={(e) => setBlend(selected.id, e.target.value)} style={{ width: '100%', border: '1px solid #dddddd', borderRadius: 10, padding: '9px 10px', fontSize: 13, color: '#222', marginBottom: 12, background: '#fff' }}>
                 {BLEND_MODES.map((b) => (<option key={b.value} value={b.value}>{b.label}</option>))}
@@ -638,7 +913,7 @@ export default function CompositeBoard({
                 style={{ width: '100%', accentColor: '#2563eb', marginBottom: 10 }}
               />
               <div style={{ fontSize: 10, color: '#8a8a8a', marginBottom: 10, lineHeight: 1.5 }}>
-                코너=비율유지 · Shift=자유 · 방향키 1px(Shift 10) · C=Crop · Del=삭제 · ⌘/Ctrl+Z=실행취소
+                코너=비율유지 · Shift=자유 · 방향키 1px(Shift 10) · C=Crop · M=마스크 · -/+=브러쉬 크기 · Del=삭제 · ⌘/Ctrl+Z=실행취소
               </div>
               <div style={{ display: 'flex', gap: 6 }}>
                 <button onClick={() => moveOrder(selected.id, 'up')} style={miniBtn}>앞으로</button>

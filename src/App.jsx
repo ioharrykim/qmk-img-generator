@@ -595,7 +595,11 @@ export default function App() {
   const HISTORY_MAX = 50
   // 편집 메타데이터만 snapshot (Image/File 원본은 src 문자열로 참조 유지)
   const snapshotBoard = () => ({
-    layers: boardLayers.map((l) => ({ ...l, crop: l.crop ? { ...l.crop } : null })),
+    layers: boardLayers.map((l) => ({
+      ...l,
+      crop: l.crop ? { ...l.crop } : null,
+      mask: l.mask ? { ...l.mask } : null,
+    })),
     config: { ...boardConfig },
     selectedId: boardSelectedId,
   })
@@ -604,7 +608,11 @@ export default function App() {
     setBoardRedo([])
   }
   const applyBoardSnapshot = (s) => {
-    setBoardLayers(s.layers.map((l) => ({ ...l, crop: l.crop ? { ...l.crop } : null })))
+    setBoardLayers(s.layers.map((l) => ({
+      ...l,
+      crop: l.crop ? { ...l.crop } : null,
+      mask: l.mask ? { ...l.mask } : null,
+    })))
     setBoardConfig({ ...s.config })
     setBoardSelectedId(s.selectedId)
   }
