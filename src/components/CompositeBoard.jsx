@@ -23,20 +23,25 @@ const BLEND_MODES = [
   { value: 'luminosity', label: '광도 (Luminosity)' },
 ]
 
-const HANDLE_KEYS = ['nw', 'ne', 'sw', 'se']
+const HANDLE_KEYS = ['nw', 'n', 'ne', 'e', 'se', 's', 'sw', 'w']
+const CORNER_KEYS = ['nw', 'ne', 'se', 'sw']
+const CURSORS = { nw: 'nwse-resize', se: 'nwse-resize', ne: 'nesw-resize', sw: 'nesw-resize', n: 'ns-resize', s: 'ns-resize', e: 'ew-resize', w: 'ew-resize' }
 
 export default function CompositeBoard({ open, layers, onLayersChange, config, onConfigChange, history = [], resolveItem, onAddImage, onClose }) {
   const compRef = useRef(null)
   const overlayRef = useRef(null)
+  const workspaceRef = useRef(null)
   const cacheRef = useRef(new Map()) // src -> HTMLImageElement
   const fileRef = useRef(null)
   const dragRef = useRef(null)
-  const [tick, setTick] = useState(0) // 이미지 로드 후 리렌더 트리거
+  const [tick, setTick] = useState(0)
   const [selectedId, setSelectedId] = useState(null)
   const [picker, setPicker] = useState(false)
   const [busy, setBusy] = useState(false)
+  const [zoom, setZoom] = useState(1)
+  const [cursor, setCursor] = useState('default')
 
-  // 레이어 이미지 로드 (src 캐시)
+  // ── 이미지 로드 ──────────────────────
   useEffect(() => {
     if (!open) return
     let alive = true
@@ -55,18 +60,34 @@ export default function CompositeBoard({ open, layers, onLayersChange, config, o
     }
   }, [layers, open])
 
+  // ── 줌: 열릴 때/보드 크기 변경 시 맞춤 ──
+  const fitZoom = () => {
+    const el = workspaceRef.current
+    if (!el) return
+    const availW = el.clientWidth - 56
+    const availH = el.clientHeight - 72
+    const z = Math.min(availW / config.w, availH / config.h, 1)
+    setZoom(Math.max(0.05, z || 1))
+  }
+  useEffect(() => {
+    if (!open) return
+    const id = requestAnimationFrame(fitZoom)
+    return () => cancelAnimationFrame(id)
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [open, config.w, config.h])
+
   const update = (id, patch) =>
     onLayersChange((prev) => prev.map((l) => (l.id === id ? { ...l, ...(typeof patch === 'function' ? patch(l) : patch) } : l)))
 
-  // ── 렌더 ──────────────────────────────
-  const renderComposite = (forExport, jpegBg) => {
-    const c = compRef.current
+  // ── 렌더 (preview = export 동일 경로) ──
+  const renderComposite = (canvas, jpegBg) => {
+    const c = canvas || compRef.current
     if (!c) return null
     c.width = config.w
     c.height = config.h
     const ctx = c.getContext('2d')
     ctx.clearRect(0, 0, c.width, c.height)
-    const bg = forExport && jpegBg && config.bg === 'transparent' ? '#ffffff' : config.bg
+    const bg = jpegBg && config.bg === 'transparent' ? '#ffffff' : config.bg
     if (bg && bg !== 'transparent') {
       ctx.fillStyle = bg === 'white' ? '#ffffff' : bg
       ctx.fillRect(0, 0, c.width, c.height)
@@ -75,13 +96,42 @@ export default function CompositeBoard({ open, layers, onLayersChange, config, o
       if (!l.visible) continue
       const img = cacheRef.current.get(l.src)
       if (!img) continue
+      ctx.save()
       ctx.globalAlpha = l.opacity == null ? 1 : l.opacity
       ctx.globalCompositeOperation = l.blend || 'source-over'
-      ctx.drawImage(img, l.x, l.y, l.w, l.h)
+      const rot = l.rotation || 0
+      if (rot) {
+        ctx.translate(l.x + l.w / 2, l.y + l.h / 2)
+        ctx.rotate((rot * Math.PI) / 180)
+        ctx.drawImage(img, -l.w / 2, -l.h / 2, l.w, l.h)
+      } else {
+        ctx.drawImage(img, l.x, l.y, l.w, l.h)
+      }
+      ctx.restore()
     }
-    ctx.globalAlpha = 1
-    ctx.globalCompositeOperation = 'source-over'
     return c
+  }
+
+  const boardScale = () => {
+    const o = overlayRef.current
+    if (!o) return 1
+    const r = o.getBoundingClientRect()
+    return r.width > 0 ? config.w / r.width : 1
+  }
+
+  const handlePos = (l, key) => {
+    const { x, y, w, h } = l
+    switch (key) {
+      case 'nw': return [x, y]
+      case 'n': return [x + w / 2, y]
+      case 'ne': return [x + w, y]
+      case 'e': return [x + w, y + h / 2]
+      case 'se': return [x + w, y + h]
+      case 's': return [x + w / 2, y + h]
+      case 'sw': return [x, y + h]
+      case 'w': return [x, y + h / 2]
+      default: return [x, y]
+    }
   }
 
   const renderOverlay = () => {
@@ -93,13 +143,23 @@ export default function CompositeBoard({ open, layers, onLayersChange, config, o
     ctx.clearRect(0, 0, o.width, o.height)
     const l = layers.find((x) => x.id === selectedId)
     if (!l) return
-    const lw = Math.max(2, config.w / 360)
+    const s = boardScale()
     ctx.strokeStyle = '#2563eb'
-    ctx.lineWidth = lw
+    ctx.lineWidth = 1.5 * s
+    ctx.setLineDash([6 * s, 4 * s])
     ctx.strokeRect(l.x, l.y, l.w, l.h)
-    const hs = Math.max(10, config.w / 90)
-    ctx.fillStyle = '#2563eb'
-    corners(l).forEach(([cx, cy]) => ctx.fillRect(cx - hs / 2, cy - hs / 2, hs, hs))
+    ctx.setLineDash([])
+    const hs = 9 * s
+    HANDLE_KEYS.forEach((k) => {
+      const [hx, hy] = handlePos(l, k)
+      ctx.fillStyle = '#ffffff'
+      ctx.strokeStyle = '#2563eb'
+      ctx.lineWidth = 1.5 * s
+      ctx.beginPath()
+      ctx.rect(hx - hs / 2, hy - hs / 2, hs, hs)
+      ctx.fill()
+      ctx.stroke()
+    })
   }
 
   useEffect(() => {
@@ -110,7 +170,7 @@ export default function CompositeBoard({ open, layers, onLayersChange, config, o
   useEffect(() => {
     if (open) renderOverlay()
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [layers, selectedId, config, tick, open])
+  }, [layers, selectedId, config, tick, open, zoom])
 
   // ── 좌표/히트테스트 ───────────────────
   const toBoard = (e) => {
@@ -118,17 +178,11 @@ export default function CompositeBoard({ open, layers, onLayersChange, config, o
     const r = o.getBoundingClientRect()
     return { x: ((e.clientX - r.left) / r.width) * config.w, y: ((e.clientY - r.top) / r.height) * config.h }
   }
-  const corners = (l) => [
-    [l.x, l.y],
-    [l.x + l.w, l.y],
-    [l.x, l.y + l.h],
-    [l.x + l.w, l.y + l.h],
-  ]
-  const hitCorner = (l, p) => {
-    const r = Math.max(14, config.w / 70)
-    const c = corners(l)
-    for (let i = 0; i < c.length; i++) {
-      if (Math.hypot(p.x - c[i][0], p.y - c[i][1]) <= r) return HANDLE_KEYS[i]
+  const hitHandle = (l, p) => {
+    const rad = 13 * boardScale()
+    for (const k of HANDLE_KEYS) {
+      const [hx, hy] = handlePos(l, k)
+      if (Math.abs(p.x - hx) <= rad && Math.abs(p.y - hy) <= rad) return k
     }
     return null
   }
@@ -136,13 +190,17 @@ export default function CompositeBoard({ open, layers, onLayersChange, config, o
 
   const onPointerDown = (e) => {
     e.preventDefault()
-    overlayRef.current.setPointerCapture?.(e.pointerId)
+    try {
+      overlayRef.current.setPointerCapture?.(e.pointerId)
+    } catch (err) {
+      /* 일부 환경에서 capture 실패해도 인터랙션은 진행 */
+    }
     const p = toBoard(e)
     const sel = layers.find((x) => x.id === selectedId)
     if (sel && sel.visible) {
-      const corner = hitCorner(sel, p)
-      if (corner) {
-        dragRef.current = { type: 'resize', id: sel.id, corner, aspect: sel.aspect || sel.w / sel.h }
+      const k = hitHandle(sel, p)
+      if (k) {
+        dragRef.current = { type: 'resize', id: sel.id, handle: k, aspect: sel.w / sel.h || 1 }
         return
       }
     }
@@ -157,59 +215,98 @@ export default function CompositeBoard({ open, layers, onLayersChange, config, o
     setSelectedId(null)
   }
 
+  const resize = (l, handle, p, aspect, shift) => {
+    let { x, y, w, h } = l
+    const keep = CORNER_KEYS.includes(handle) && !shift // 코너 기본 비율 유지, Shift=자유
+    const min = 16
+    if (handle === 'e') w = Math.max(min, p.x - x)
+    else if (handle === 'w') { const ax = x + w; w = Math.max(min, ax - p.x); x = ax - w }
+    else if (handle === 's') h = Math.max(min, p.y - y)
+    else if (handle === 'n') { const ay = y + h; h = Math.max(min, ay - p.y); y = ay - h }
+    else if (handle === 'se') { w = Math.max(min, p.x - x); h = keep ? w / aspect : Math.max(min, p.y - y) }
+    else if (handle === 'ne') { const ay = y + h; w = Math.max(min, p.x - x); h = keep ? w / aspect : Math.max(min, ay - p.y); y = ay - h }
+    else if (handle === 'sw') { const ax = x + w; w = Math.max(min, ax - p.x); h = keep ? w / aspect : Math.max(min, p.y - y); x = ax - w }
+    else if (handle === 'nw') { const ax = x + w, ay = y + h; w = Math.max(min, ax - p.x); h = keep ? w / aspect : Math.max(min, ay - p.y); x = ax - w; y = ay - h }
+    return { x, y, w, h }
+  }
+
   const onPointerMove = (e) => {
-    if (!dragRef.current) return
-    const p = toBoard(e)
     const d = dragRef.current
+    if (!d) {
+      // hover 커서
+      const sel = layers.find((x) => x.id === selectedId)
+      if (sel && sel.visible) {
+        const k = hitHandle(sel, toBoard(e))
+        setCursor(k ? CURSORS[k] : inRect(sel, toBoard(e)) ? 'move' : 'default')
+      } else setCursor('default')
+      return
+    }
+    const p = toBoard(e)
     if (d.type === 'move') {
-      update(d.id, (l) => ({ x: p.x - d.offX, y: p.y - d.offY }))
+      update(d.id, () => ({ x: p.x - d.offX, y: p.y - d.offY }))
     } else if (d.type === 'resize') {
-      update(d.id, (l) => {
-        const aspect = d.aspect || l.w / l.h || 1
-        let { x, y, w, h } = l
-        if (d.corner === 'se') {
-          w = Math.max(16, p.x - l.x)
-          h = w / aspect
-        } else if (d.corner === 'ne') {
-          w = Math.max(16, p.x - l.x)
-          h = w / aspect
-          y = l.y + l.h - h
-        } else if (d.corner === 'sw') {
-          w = Math.max(16, l.x + l.w - p.x)
-          h = w / aspect
-          x = l.x + l.w - w
-        } else {
-          // nw
-          w = Math.max(16, l.x + l.w - p.x)
-          h = w / aspect
-          x = l.x + l.w - w
-          y = l.y + l.h - h
-        }
-        return { x, y, w, h }
-      })
+      update(d.id, (l) => resize(l, d.handle, p, d.aspect, e.shiftKey))
     }
   }
 
   const onPointerUp = (e) => {
     dragRef.current = null
-    overlayRef.current.releasePointerCapture?.(e.pointerId)
+    try {
+      overlayRef.current.releasePointerCapture?.(e.pointerId)
+    } catch (err) {
+      /* 무시 */
+    }
   }
 
   // ── 레이어 조작 ──────────────────────
   const removeLayer = (id) => {
     onLayersChange((prev) => prev.filter((l) => l.id !== id))
-    if (selectedId === id) setSelectedId(null)
+    setSelectedId((cur) => (cur === id ? null : cur))
   }
   const move = (id, dir) =>
     onLayersChange((prev) => {
       const i = prev.findIndex((l) => l.id === id)
       if (i < 0) return prev
-      const j = dir === 'up' ? i + 1 : i - 1 // up = 앞으로(위) = 배열 뒤
+      const j = dir === 'up' ? i + 1 : i - 1
       if (j < 0 || j >= prev.length) return prev
       const next = [...prev]
       ;[next[i], next[j]] = [next[j], next[i]]
       return next
     })
+
+  // ── 키보드 ───────────────────────────
+  useEffect(() => {
+    if (!open) return
+    const onKey = (e) => {
+      const tag = (e.target.tagName || '').toLowerCase()
+      if (tag === 'input' || tag === 'select' || tag === 'textarea') return
+      if ((e.metaKey || e.ctrlKey) && (e.key === 't' || e.key === 'T')) {
+        e.preventDefault()
+        if (!selectedId && layers.length) setSelectedId(layers[layers.length - 1].id)
+        return
+      }
+      if (e.key === 'Escape') {
+        if (selectedId) setSelectedId(null)
+        else onClose()
+        return
+      }
+      const sel = layers.find((l) => l.id === selectedId)
+      if (!sel) return
+      if (e.key === 'Delete' || e.key === 'Backspace') {
+        e.preventDefault()
+        removeLayer(sel.id)
+        return
+      }
+      const step = e.shiftKey ? 10 : 1
+      if (e.key === 'ArrowLeft') { e.preventDefault(); update(sel.id, (l) => ({ x: l.x - step })) }
+      else if (e.key === 'ArrowRight') { e.preventDefault(); update(sel.id, (l) => ({ x: l.x + step })) }
+      else if (e.key === 'ArrowUp') { e.preventDefault(); update(sel.id, (l) => ({ y: l.y - step })) }
+      else if (e.key === 'ArrowDown') { e.preventDefault(); update(sel.id, (l) => ({ y: l.y + step })) }
+    }
+    window.addEventListener('keydown', onKey)
+    return () => window.removeEventListener('keydown', onKey)
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [open, selectedId, layers])
 
   // ── 이미지 추가 ──────────────────────
   const addFile = async (file) => {
@@ -239,13 +336,10 @@ export default function CompositeBoard({ open, layers, onLayersChange, config, o
   // ── 내보내기 ─────────────────────────
   const exportBoard = (format) => {
     const isJpeg = format === 'jpeg'
-    const c = renderComposite(true, isJpeg)
+    const c = renderComposite(document.createElement('canvas'), isJpeg)
     if (!c) return
     c.toBlob(
-      (blob) => {
-        if (blob) downloadBlob(blob, `board-${uid()}.${isJpeg ? 'jpg' : 'png'}`)
-        renderComposite() // 표시용 재렌더 (jpeg 흰배경 제거)
-      },
+      (blob) => blob && downloadBlob(blob, `board-${uid()}.${isJpeg ? 'jpg' : 'png'}`),
       isJpeg ? 'image/jpeg' : 'image/png',
       0.92
     )
@@ -253,51 +347,64 @@ export default function CompositeBoard({ open, layers, onLayersChange, config, o
 
   if (!open) return null
   const selected = layers.find((l) => l.id === selectedId)
-  // 패널은 위가 앞(front) → 배열 역순
-  const ordered = [...layers].reverse()
+  const ordered = [...layers].reverse() // 패널: 위가 앞
+  const setZoomClamped = (z) => setZoom(Math.min(4, Math.max(0.05, z)))
 
   return (
-    <div style={{ position: 'fixed', inset: 0, zIndex: 90, background: 'rgba(20,20,22,0.92)', display: 'flex', flexDirection: 'column' }}>
+    <div style={{ position: 'fixed', inset: 0, zIndex: 90, background: '#2b2b2e', display: 'flex', flexDirection: 'column' }}>
       {/* 상단 바 */}
-      <div style={{ flex: 'none', height: 56, display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '0 18px', borderBottom: '1px solid rgba(255,255,255,0.12)' }}>
+      <div style={{ flex: 'none', height: 52, display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '0 16px', background: '#202022', borderBottom: '1px solid rgba(255,255,255,0.08)' }}>
         <div style={{ display: 'flex', alignItems: 'center', gap: 12, color: '#fff' }}>
-          <span style={{ fontSize: 16, fontWeight: 700 }}>🎨 합성 보드</span>
-          <span style={{ fontSize: 12, color: 'rgba(255,255,255,0.55)' }}>레이어 {layers.length}개</span>
+          <span style={{ fontSize: 15, fontWeight: 700 }}>🎨 합성 보드</span>
+          <span style={{ fontSize: 12, color: 'rgba(255,255,255,0.5)' }}>레이어 {layers.length}개</span>
         </div>
         <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+          {/* 줌 */}
+          <div style={{ display: 'flex', alignItems: 'center', gap: 2, marginRight: 6 }}>
+            <button onClick={() => setZoomClamped(zoom / 1.25)} style={zoomBtn}>−</button>
+            <span style={{ color: 'rgba(255,255,255,0.8)', fontSize: 12, width: 46, textAlign: 'center' }}>{Math.round(zoom * 100)}%</span>
+            <button onClick={() => setZoomClamped(zoom * 1.25)} style={zoomBtn}>+</button>
+            <button onClick={fitZoom} style={{ ...zoomBtn, width: 'auto', padding: '0 8px', fontSize: 11 }}>맞춤</button>
+          </div>
           <button onClick={() => exportBoard('png')} style={btn('#ff4800')}>PNG 저장</button>
-          <button onClick={() => exportBoard('jpeg')} style={btn('#222')}>JPEG 저장</button>
-          <button onClick={onClose} style={{ ...btn('transparent'), border: '1px solid rgba(255,255,255,0.3)' }}>닫기</button>
+          <button onClick={() => exportBoard('jpeg')} style={btn('#3a3a3d')}>JPEG 저장</button>
+          <button onClick={onClose} style={{ ...btn('transparent'), border: '1px solid rgba(255,255,255,0.25)' }}>닫기</button>
         </div>
       </div>
 
       <div style={{ flex: 1, minHeight: 0, display: 'flex' }}>
-        {/* 캔버스 영역 */}
-        <div style={{ flex: 1, minWidth: 0, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 24, overflow: 'hidden' }}>
-          <div
-            style={{
-              position: 'relative',
-              maxWidth: '100%',
-              maxHeight: '100%',
-              aspectRatio: `${config.w} / ${config.h}`,
-              boxShadow: '0 10px 40px rgba(0,0,0,0.5)',
-              backgroundColor: '#fff',
-              backgroundImage:
-                config.bg === 'transparent'
-                  ? 'linear-gradient(45deg,#ccc 25%,transparent 25%),linear-gradient(-45deg,#ccc 25%,transparent 25%),linear-gradient(45deg,transparent 75%,#ccc 75%),linear-gradient(-45deg,transparent 75%,#ccc 75%)'
-                  : 'none',
-              backgroundSize: '20px 20px',
-              backgroundPosition: '0 0,0 10px,10px -10px,-10px 0',
-            }}
-          >
-            <canvas ref={compRef} style={{ position: 'absolute', inset: 0, width: '100%', height: '100%', display: 'block' }} />
-            <canvas
-              ref={overlayRef}
-              onPointerDown={onPointerDown}
-              onPointerMove={onPointerMove}
-              onPointerUp={onPointerUp}
-              style={{ position: 'absolute', inset: 0, width: '100%', height: '100%', display: 'block', cursor: 'move', touchAction: 'none' }}
-            />
+        {/* 작업대 */}
+        <div ref={workspaceRef} style={{ flex: 1, minWidth: 0, display: 'flex', overflow: 'auto', background: '#3a3a3d' }}>
+          <div style={{ margin: 'auto', padding: 28 }}>
+            {/* 사이즈 라벨 */}
+            <div style={{ color: 'rgba(255,255,255,0.55)', fontSize: 11, fontWeight: 600, marginBottom: 8, textAlign: 'center' }}>
+              {config.w} × {config.h} px · {Math.round(zoom * 100)}%
+            </div>
+            <div
+              style={{
+                position: 'relative',
+                width: config.w * zoom,
+                height: config.h * zoom,
+                border: '1px solid rgba(0,0,0,0.5)',
+                boxShadow: '0 8px 40px rgba(0,0,0,0.55)',
+                backgroundColor: config.bg === 'transparent' ? '#ffffff' : config.bg === 'white' ? '#fff' : config.bg,
+                backgroundImage:
+                  config.bg === 'transparent'
+                    ? 'linear-gradient(45deg,#d8d8d8 25%,transparent 25%),linear-gradient(-45deg,#d8d8d8 25%,transparent 25%),linear-gradient(45deg,transparent 75%,#d8d8d8 75%),linear-gradient(-45deg,transparent 75%,#d8d8d8 75%)'
+                    : 'none',
+                backgroundSize: '24px 24px',
+                backgroundPosition: '0 0,0 12px,12px -12px,-12px 0',
+              }}
+            >
+              <canvas ref={compRef} style={{ position: 'absolute', inset: 0, width: '100%', height: '100%', display: 'block' }} />
+              <canvas
+                ref={overlayRef}
+                onPointerDown={onPointerDown}
+                onPointerMove={onPointerMove}
+                onPointerUp={onPointerUp}
+                style={{ position: 'absolute', inset: 0, width: '100%', height: '100%', display: 'block', cursor, touchAction: 'none' }}
+              />
+            </div>
           </div>
         </div>
 
@@ -312,14 +419,8 @@ export default function CompositeBoard({ open, layers, onLayersChange, config, o
               <input type="number" value={config.h} onChange={(e) => onConfigChange({ ...config, h: Math.max(16, Number(e.target.value) || 16) })} style={numInput} />
             </div>
             <div style={{ display: 'flex', gap: 6 }}>
-              {[
-                { v: 'transparent', t: '투명' },
-                { v: 'white', t: '흰색' },
-                { v: '#111111', t: '검정' },
-              ].map((o) => (
-                <button key={o.v} onClick={() => onConfigChange({ ...config, bg: o.v })} style={chip(config.bg === o.v)}>
-                  {o.t}
-                </button>
+              {[{ v: 'transparent', t: '투명' }, { v: 'white', t: '흰색' }, { v: '#111111', t: '검정' }].map((o) => (
+                <button key={o.v} onClick={() => onConfigChange({ ...config, bg: o.v })} style={chip(config.bg === o.v)}>{o.t}</button>
               ))}
             </div>
           </div>
@@ -327,26 +428,18 @@ export default function CompositeBoard({ open, layers, onLayersChange, config, o
           {/* 이미지 추가 */}
           <div style={{ padding: '12px 16px', borderBottom: '1px solid #ebebeb', display: 'flex', gap: 8 }}>
             <button onClick={() => fileRef.current && fileRef.current.click()} style={{ ...addBtn, flex: 1 }}>＋ 업로드</button>
-            <button onClick={() => setPicker((v) => !v)} style={{ ...addBtn, flex: 1, background: picker ? '#fff1eb' : '#fff', borderColor: picker ? '#ff4800' : '#dddddd', color: picker ? '#ff4800' : '#222' }}>
-              ＋ 기록에서
-            </button>
+            <button onClick={() => setPicker((v) => !v)} style={{ ...addBtn, flex: 1, background: picker ? '#fff1eb' : '#fff', borderColor: picker ? '#ff4800' : '#dddddd', color: picker ? '#ff4800' : '#222' }}>＋ 기록에서</button>
             <input ref={fileRef} type="file" accept="image/*" multiple style={{ display: 'none' }} onChange={(e) => { Array.from(e.target.files || []).forEach(addFile); e.target.value = '' }} />
           </div>
 
           {picker && (
-            <div style={{ padding: '12px 16px', borderBottom: '1px solid #ebebeb', maxHeight: 220, overflowY: 'auto' }}>
+            <div style={{ padding: '12px 16px', borderBottom: '1px solid #ebebeb', maxHeight: 200, overflowY: 'auto' }}>
               {history.length === 0 ? (
                 <div style={{ fontSize: 12, color: '#6a6a6a' }}>기록이 없습니다.</div>
               ) : (
                 <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3,1fr)', gap: 6 }}>
                   {history.slice(0, 30).map((item) => (
-                    <img
-                      key={item.id}
-                      src={item.url}
-                      alt=""
-                      onClick={() => !busy && addFromHistory(item)}
-                      style={{ width: '100%', aspectRatio: '1', objectFit: 'cover', borderRadius: 8, cursor: 'pointer', border: '1px solid #ebebeb', opacity: busy ? 0.5 : 1 }}
-                    />
+                    <img key={item.id} src={item.url} alt="" onClick={() => !busy && addFromHistory(item)} style={{ width: '100%', aspectRatio: '1', objectFit: 'cover', borderRadius: 8, cursor: 'pointer', border: '1px solid #ebebeb', opacity: busy ? 0.5 : 1 }} />
                   ))}
                 </div>
               )}
@@ -362,16 +455,7 @@ export default function CompositeBoard({ open, layers, onLayersChange, config, o
                 <div
                   key={l.id}
                   onClick={() => setSelectedId(l.id)}
-                  style={{
-                    display: 'flex',
-                    alignItems: 'center',
-                    gap: 8,
-                    padding: 6,
-                    borderRadius: 10,
-                    cursor: 'pointer',
-                    border: '1px solid ' + (selectedId === l.id ? '#2563eb' : '#ebebeb'),
-                    background: selectedId === l.id ? '#eff5ff' : '#fff',
-                  }}
+                  style={{ display: 'flex', alignItems: 'center', gap: 8, padding: 6, borderRadius: 10, cursor: 'pointer', border: '1px solid ' + (selectedId === l.id ? '#2563eb' : '#ebebeb'), background: selectedId === l.id ? '#eff5ff' : '#fff' }}
                 >
                   <img src={l.src} alt="" style={{ width: 36, height: 36, objectFit: 'cover', borderRadius: 6, flex: 'none', background: '#f7f7f7' }} />
                   <div style={{ flex: 1, minWidth: 0 }}>
@@ -390,15 +474,16 @@ export default function CompositeBoard({ open, layers, onLayersChange, config, o
               <div style={{ fontSize: 12, fontWeight: 700, color: '#222', marginBottom: 10 }}>선택한 레이어</div>
               <label style={lbl}>블렌딩 모드</label>
               <select value={selected.blend || 'source-over'} onChange={(e) => update(selected.id, { blend: e.target.value })} style={{ width: '100%', border: '1px solid #dddddd', borderRadius: 10, padding: '9px 10px', fontSize: 13, color: '#222', marginBottom: 12, background: '#fff' }}>
-                {BLEND_MODES.map((b) => (
-                  <option key={b.value} value={b.value}>{b.label}</option>
-                ))}
+                {BLEND_MODES.map((b) => (<option key={b.value} value={b.value}>{b.label}</option>))}
               </select>
               <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 4 }}>
                 <label style={lbl}>불투명도</label>
                 <span style={{ fontSize: 11, color: '#6a6a6a' }}>{Math.round((selected.opacity == null ? 1 : selected.opacity) * 100)}%</span>
               </div>
-              <input type="range" min="0" max="100" value={Math.round((selected.opacity == null ? 1 : selected.opacity) * 100)} onChange={(e) => update(selected.id, { opacity: Number(e.target.value) / 100 })} style={{ width: '100%', accentColor: '#2563eb', marginBottom: 12 }} />
+              <input type="range" min="0" max="100" value={Math.round((selected.opacity == null ? 1 : selected.opacity) * 100)} onChange={(e) => update(selected.id, { opacity: Number(e.target.value) / 100 })} style={{ width: '100%', accentColor: '#2563eb', marginBottom: 10 }} />
+              <div style={{ fontSize: 10, color: '#8a8a8a', marginBottom: 10, lineHeight: 1.5 }}>
+                코너 드래그=비율 유지 · Shift=자유 · 방향키=1px(Shift 10px) · Del=삭제 · ⌘/Ctrl+T=변형
+              </div>
               <div style={{ display: 'flex', gap: 6 }}>
                 <button onClick={() => move(selected.id, 'up')} style={miniBtn}>앞으로</button>
                 <button onClick={() => move(selected.id, 'down')} style={miniBtn}>뒤로</button>
@@ -421,7 +506,8 @@ function imgDims(src) {
   })
 }
 
-const btn = (bg) => ({ background: bg, color: '#fff', border: 'none', borderRadius: 9, padding: '8px 14px', fontSize: 13, fontWeight: 700, cursor: 'pointer' })
+const btn = (bg) => ({ background: bg, color: '#fff', border: 'none', borderRadius: 8, padding: '8px 13px', fontSize: 13, fontWeight: 700, cursor: 'pointer' })
+const zoomBtn = { width: 26, height: 26, borderRadius: 6, border: '1px solid rgba(255,255,255,0.2)', background: 'transparent', color: '#fff', fontSize: 14, cursor: 'pointer', lineHeight: 1 }
 const numInput = { width: '100%', border: '1px solid #dddddd', borderRadius: 8, padding: '7px 9px', fontSize: 13, color: '#222' }
 const chip = (active) => ({ flex: 1, border: '1px solid ' + (active ? '#ff4800' : '#dddddd'), background: active ? '#fff1eb' : '#fff', color: active ? '#ff4800' : '#222', borderRadius: 8, padding: '7px 4px', fontSize: 12, fontWeight: 600, cursor: 'pointer' })
 const addBtn = { border: '1px solid #dddddd', background: '#fff', color: '#222', borderRadius: 9, padding: '9px 8px', fontSize: 12, fontWeight: 600, cursor: 'pointer' }
