@@ -422,6 +422,7 @@ export default function App() {
         model: settings.promptModel,
         version: qmarket.version,
         brief,
+        refCount: references.length,
       })
       if (!text) throw new Error('프롬프트를 받지 못했습니다.')
       update({ prompt: text, styles: [] })

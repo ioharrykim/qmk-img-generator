@@ -21,8 +21,8 @@ async function readJsonResponse(res, label) {
   }
 }
 
-export async function generateDetailPrompt({ apiKey, model, version, brief }) {
-  const messages = buildQmarketMessages({ version, brief })
+export async function generateDetailPrompt({ apiKey, model, version, brief, refCount = 0 }) {
+  const messages = buildQmarketMessages({ version, brief, refCount })
   const useModel = model || 'gpt-5.5'
 
   if (API_MODE === 'proxy') {

@@ -113,6 +113,9 @@ export default function QmarketDetailPanel({ qmarket = {}, onToggle, onChange, o
               rows={3}
               style={{ ...inputStyle, resize: 'vertical', lineHeight: 1.5 }}
             />
+            <div style={{ fontSize: 11, color: '#6a6a6a', marginTop: 6, lineHeight: 1.5 }}>
+              💡 서울우유·나이키 같은 <b style={{ color: '#222' }}>실제 상품</b>은 이름을 그대로 적으면 브랜드가 유지됩니다. 정확한 외형이 필요하면 위 <b style={{ color: '#222' }}>참조 이미지</b>에 제품 사진을 첨부하세요.
+            </div>
           </Field>
 
           <button
