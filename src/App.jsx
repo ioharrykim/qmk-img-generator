@@ -6,19 +6,21 @@ import HistoryStrip from './components/HistoryStrip'
 import HistoryPanel from './components/HistoryPanel'
 import Lightbox from './components/Lightbox'
 import ApiKeyModal from './components/ApiKeyModal'
+import PromptModelModal from './components/PromptModelModal'
 import Toast from './components/Toast'
 import Login from './components/Login'
 import CostBadge from './components/CostBadge'
 import MaskEditor from './components/MaskEditor'
 import PasswordModal from './components/PasswordModal'
 import CompositeBoard from './components/CompositeBoard'
-import { DEFAULT_SETTINGS, PERSISTED_FIELDS, STORAGE_KEYS, SIZE_DEFS } from './constants'
+import { DEFAULT_SETTINGS, PERSISTED_FIELDS, STORAGE_KEYS, SIZE_DEFS, PROMPT_MODELS } from './constants'
 import { KEY_REQUIRED, MAX_REFERENCES, SUPABASE_ENABLED } from './config'
 import { generateImages, buildPrompt } from './api'
 import { generateDetailPrompt, generateSnsPrompt } from './promptgen'
-import { SNS_FORMATS } from './snsPrompts'
+import { buildQmarketMessages } from './qmarketPrompts'
+import { SNS_FORMATS, buildSnsMessages } from './snsPrompts'
 import { buildTypographyPrompt, DEFAULT_TYPOGRAPHY, sizeForCount } from './typography'
-import { sumUsd, textCostUsd, fetchKrwRate, DEFAULT_KRW_RATE, estimateGenerationCost } from './pricing'
+import { sumUsd, textCostUsd, estimateTextTokens, fetchKrwRate, DEFAULT_KRW_RATE, estimateGenerationCost } from './pricing'
 import { supabase } from './supabase'
 import * as historyStore from './history'
 import { addHistoryItem } from './db'
@@ -97,6 +99,9 @@ function loadPresets() {
 const DEFAULT_QMARKET = { enabled: false, version: 'realistic', title: '', subtitle: '', concept: '' }
 const DEFAULT_SNS = { enabled: false, format: 'feed', version: 'realistic', topic: 'free', textMode: 'bg', title: '', subtitle: '', concept: '' }
 
+// 프롬프트 생성 예상 비용 계산용 대략 출력 토큰 수
+const PROMPT_OUT_EST = 1200
+
 function loadQmarket() {
   try {
     const raw = localStorage.getItem(STORAGE_KEYS.qmarket)
@@ -173,6 +178,7 @@ export default function App() {
   // 큐마켓 상세페이지 모드 + AI 프롬프트 생성
   const [qmarket, setQmarket] = useState(loadQmarket)
   const [generatingPrompt, setGeneratingPrompt] = useState(false)
+  const [promptModal, setPromptModal] = useState(null) // 프롬프트 생성 모델 선택 팝업 { estInputTokens, run }
 
   // 타이포그래피 제작 모드 (AI 미사용)
   const [typography, setTypography] = useState(loadTypography)
@@ -427,7 +433,26 @@ export default function App() {
 
   const onQmarketChange = (patch) => setQmarket((q) => ({ ...q, ...patch }))
 
-  const onGeneratePrompt = async () => {
+  // 모델 선택 후 실제 프롬프트 생성 실행 (상세페이지·SNS 공용)
+  const runPromptGen = async (generator) => {
+    setGeneratingPrompt(true)
+    setToast(null)
+    try {
+      const { text, usage, model } = await generator()
+      if (!text) throw new Error('프롬프트를 받지 못했습니다.')
+      update({ prompt: text, styles: [] })
+      if (usage) setSessionUsd((u) => u + textCostUsd(model, usage.prompt_tokens, usage.completion_tokens))
+      setToast({ type: 'success', message: 'AI 프롬프트를 생성했어요. 아래에서 확인·수정하세요.' })
+      setPromptModal(null)
+    } catch (e) {
+      setToast({ type: 'error', message: e.message || '프롬프트 생성 중 오류가 발생했습니다.' })
+    } finally {
+      setGeneratingPrompt(false)
+    }
+  }
+
+  // "AI로 프롬프트 생성" → 모델 선택 팝업 (상세페이지)
+  const onGeneratePrompt = () => {
     if (generatingPrompt) return
     if (KEY_REQUIRED && !apiKey) {
       setShowKeyModal(true)
@@ -438,25 +463,12 @@ export default function App() {
       setToast({ type: 'error', message: '타이틀이나 컨셉을 입력해 주세요.' })
       return
     }
-    setGeneratingPrompt(true)
-    setToast(null)
-    try {
-      const { text, usage, model } = await generateDetailPrompt({
-        apiKey,
-        model: settings.promptModel,
-        version: qmarket.version,
-        brief,
-        refCount: references.length,
-      })
-      if (!text) throw new Error('프롬프트를 받지 못했습니다.')
-      update({ prompt: text, styles: [] })
-      if (usage) setSessionUsd((u) => u + textCostUsd(model, usage.prompt_tokens, usage.completion_tokens))
-      setToast({ type: 'success', message: 'AI 프롬프트를 생성했어요. 아래에서 확인·수정하세요.' })
-    } catch (e) {
-      setToast({ type: 'error', message: e.message || '프롬프트 생성 중 오류가 발생했습니다.' })
-    } finally {
-      setGeneratingPrompt(false)
-    }
+    const messages = buildQmarketMessages({ version: qmarket.version, brief, refCount: references.length })
+    const estInputTokens = estimateTextTokens(messages.map((m) => m.content).join('\n'))
+    setPromptModal({
+      estInputTokens,
+      run: (model) => runPromptGen(() => generateDetailPrompt({ apiKey, model, version: qmarket.version, brief, refCount: references.length })),
+    })
   }
 
   // ── 큐마켓 SNS 이미지 모드 ──────────────────
@@ -475,7 +487,8 @@ export default function App() {
     setSns((s) => ({ ...s, ...patch }))
     if (patch.format != null) applySnsFormatSize(patch.format)
   }
-  const onGenerateSnsPrompt = async () => {
+  // "AI로 SNS 프롬프트 생성" → 모델 선택 팝업
+  const onGenerateSnsPrompt = () => {
     if (generatingPrompt) return
     if (KEY_REQUIRED && !apiKey) {
       setShowKeyModal(true)
@@ -486,28 +499,12 @@ export default function App() {
       setToast({ type: 'error', message: '타이틀이나 컨셉을 입력해 주세요.' })
       return
     }
-    setGeneratingPrompt(true)
-    setToast(null)
-    try {
-      const { text, usage, model } = await generateSnsPrompt({
-        apiKey,
-        model: settings.promptModel,
-        format: sns.format,
-        version: sns.version,
-        topic: sns.topic,
-        textMode: sns.textMode,
-        brief,
-        refCount: references.length,
-      })
-      if (!text) throw new Error('프롬프트를 받지 못했습니다.')
-      update({ prompt: text, styles: [] })
-      if (usage) setSessionUsd((u) => u + textCostUsd(model, usage.prompt_tokens, usage.completion_tokens))
-      setToast({ type: 'success', message: 'SNS 프롬프트를 생성했어요. 아래에서 확인·수정하세요.' })
-    } catch (e) {
-      setToast({ type: 'error', message: e.message || '프롬프트 생성 중 오류가 발생했습니다.' })
-    } finally {
-      setGeneratingPrompt(false)
-    }
+    const messages = buildSnsMessages({ format: sns.format, version: sns.version, topic: sns.topic, textMode: sns.textMode, brief, refCount: references.length })
+    const estInputTokens = estimateTextTokens(messages.map((m) => m.content).join('\n'))
+    setPromptModal({
+      estInputTokens,
+      run: (model) => runPromptGen(() => generateSnsPrompt({ apiKey, model, format: sns.format, version: sns.version, topic: sns.topic, textMode: sns.textMode, brief, refCount: references.length })),
+    })
   }
 
   // ── 타이포그래피 모드 (AI 미사용) ────────────
@@ -1031,6 +1028,23 @@ export default function App() {
           onChange={setApiKeyInput}
           onSave={saveKey}
           onClose={() => setShowKeyModal(false)}
+        />
+      )}
+      {promptModal && (
+        <PromptModelModal
+          models={PROMPT_MODELS}
+          defaultModel={settings.promptModel}
+          estInputTokens={promptModal.estInputTokens}
+          estOutputTokens={PROMPT_OUT_EST}
+          krwRate={krw.rate}
+          generating={generatingPrompt}
+          onConfirm={(model) => {
+            update({ promptModel: model })
+            promptModal.run(model)
+          }}
+          onClose={() => {
+            if (!generatingPrompt) setPromptModal(null)
+          }}
         />
       )}
     </div>

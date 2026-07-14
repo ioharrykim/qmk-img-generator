@@ -5,8 +5,9 @@
 // (상세페이지 툴과 동일 아키텍처: 짧은 입력 → gpt-5.5가 상세 프롬프트로 확장)
 
 export const SNS_FORMATS = [
-  { value: 'feed', label: '피드 (1:1)', size: '1024x1024', w: 1024, h: 1024, custom: false },
-  { value: 'reels', label: '릴스·스토리 (9:16)', size: '1024x1792', w: 1024, h: 1792, custom: true },
+  { value: 'feed', label: '피드 3:4', size: '1024x1360', w: 1024, h: 1360, custom: true },
+  { value: 'square', label: '정사각 1:1', size: '1024x1024', w: 1024, h: 1024, custom: false },
+  { value: 'reels', label: '릴스 9:16', size: '1024x1792', w: 1024, h: 1792, custom: true },
 ]
 
 export const SNS_VERSIONS = [
@@ -58,9 +59,13 @@ const TONE = `[브랜드 톤]
 - 큐마켓 SNS 특유의 밝고 친근한 무드: 따뜻한 웜톤, 자연광, 가정식/홈쿠킹 감성. 과하게 스튜디오틱하거나 번쩍이는 상업 광고 느낌은 피한다.
 - 오렌지(#ff4800 계열) 포인트 컬러가 은은하게 어울리는 깨끗하고 트렌디한 색감으로 정돈한다.`
 
-const FORMAT_FEED = `[포맷 — 피드 1:1 정사각]
-- 정확히 1:1 정사각 구도. 메인 오브제를 화면 중앙~하단에 안정적으로 배치하고, 상단(또는 한쪽)에 카피가 놓일 넓고 깨끗한 여백을 크게 확보한다.
-- 톱다운 플랫레이 또는 45도 앵글의 음식/제품 연출. 시선이 메인에 자연스럽게 모이도록 정돈하고, 요소가 많아 어수선해지지 않게 한다.`
+const FORMAT_FEED = `[포맷 — 피드 3:4 세로]
+- 세로가 살짝 긴 3:4 비율(요즘 인스타그램 피드·그리드 기본). 메인 오브제를 화면 중앙~하단에 안정적으로 배치하고, 상단(또는 한쪽)에 카피가 놓일 넓고 깨끗한 여백을 확보한다.
+- 45도 앵글 또는 톱다운의 음식/제품 연출. 세로 프레임을 채우되 어수선하지 않게 정돈하고, 시선이 메인에 자연스럽게 모이도록 한다.`
+
+const FORMAT_SQUARE = `[포맷 — 정사각 1:1]
+- 정확히 1:1 정사각 구도. 메인 오브제를 화면 중앙~하단에 두고, 상단(또는 한쪽)에 카피가 놓일 넓고 깨끗한 여백을 확보한다.
+- 톱다운 플랫레이 또는 45도 앵글로 균형 있게 정돈하고, 요소가 많아 어수선해지지 않게 한다.`
 
 const FORMAT_REELS = `[포맷 — 릴스·스토리 9:16 세로]
 - 세로로 길쭉한 9:16 구도. 인스타그램 UI가 상단 약 1/4과 하단 일부를 가리므로, 핵심 오브제와 카피는 화면 중앙~중하단에 배치한다.
@@ -76,7 +81,7 @@ const STYLE_BLENDER = `[스타일 — 블렌더 3D]
 
 export function systemPromptFor({ format = 'feed', version = 'realistic', textMode = 'bg' } = {}) {
   const textBlock = textMode === 'text' ? TEXT_BAKE : TEXT_BG
-  const fmt = format === 'reels' ? FORMAT_REELS : FORMAT_FEED
+  const fmt = format === 'reels' ? FORMAT_REELS : format === 'square' ? FORMAT_SQUARE : FORMAT_FEED
   const style = version === 'blender3d' ? STYLE_BLENDER : STYLE_REALISTIC
   return `${HEAD}\n\n${textBlock}\n\n${BRAND}\n\n${TONE}\n\n${fmt}\n\n${style}`
 }

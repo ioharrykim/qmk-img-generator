@@ -41,6 +41,13 @@ export const DEFAULT_SETTINGS = {
   useCustomSize: false,
 }
 
+// 프롬프트 생성(gpt) 모델 선택지 — 생성 시 팝업에서 고름 (가격은 pricing.TEXT_PRICE 기준)
+export const PROMPT_MODELS = [
+  { value: 'gpt-5.4-mini', label: 'gpt-5.4-mini', hint: '빠르고 저렴 · 이 툴엔 대체로 충분' },
+  { value: 'gpt-5.5', label: 'gpt-5.5', hint: '고품질 · 복잡·창의적 브리프에 유리' },
+  { value: 'gpt-5.5-pro', label: 'gpt-5.5-pro', hint: '최고급 · 가장 비쌈' },
+]
+
 // 저장(localStorage)할 설정 필드 — 휘발성 UI 상태는 제외. 프리셋 스냅샷에도 동일하게 사용.
 export const PERSISTED_FIELDS = [
   'prompt',
