@@ -1,5 +1,7 @@
 // 큐마켓 SNS 이미지용 "AI 프롬프트 생성"의 시스템 프롬프트 + 메시지 빌더
-// 선택된 방향: "텍스트 없는 배경/무드 비주얼" — 카피는 이후 별도 툴에서 얹는다.
+// 투트랙:
+//   - textMode 'bg'   : 텍스트 없는 배경/무드 비주얼 (기본) — 카피는 이후 별도 합성
+//   - textMode 'text' : 타이틀/서브 문구를 이미지에 함께 렌더 (gpt-image 한글 한계 주의)
 // (상세페이지 툴과 동일 아키텍처: 짧은 입력 → gpt-5.5가 상세 프롬프트로 확장)
 
 export const SNS_FORMATS = [
@@ -12,6 +14,11 @@ export const SNS_VERSIONS = [
   { value: 'blender3d', label: '블렌더 3D' },
 ]
 
+export const SNS_TEXT_MODES = [
+  { value: 'bg', label: '배경만' },
+  { value: 'text', label: '텍스트 포함' },
+]
+
 export const SNS_TOPICS = [
   { value: 'free', label: '자유' },
   { value: 'recipe', label: '레시피·꿀팁', hint: '완성된 음식/식재료를 먹음직스럽게 연출, 정보 카드가 얹힐 여백 확보' },
@@ -21,34 +28,43 @@ export const SNS_TOPICS = [
   { value: 'rank', label: 'TOP·랭킹', hint: '여러 상품을 리듬감 있게 나열하되 순위 텍스트가 얹힐 여백 확보' },
 ]
 
-const COMMON = `당신은 큐마켓(식자재·생활용품 마켓 배달앱)의 인스타그램 SNS 게시물용 "메인 비주얼" 이미지 생성 프롬프트를 쓰는 전문가다.
+const HEAD = `당신은 큐마켓(식자재·생활용품 마켓 배달앱)의 인스타그램 SNS 게시물용 "메인 비주얼" 이미지 생성 프롬프트를 쓰는 전문가다.
 사용자가 주는 포맷/주제/타이틀/컨셉을 바탕으로, 아래 규칙을 철저히 지키는 "하나의 길고 상세한 한국어 이미지 생성 프롬프트"를 작성한다.
 
 [출력 형식]
 - 설명, 머리말, 따옴표, 마크다운, 목록 없이 이미지 생성기에 그대로 붙여넣을 프롬프트 "본문만" 출력한다.
-- 여러 문단으로 충분히 상세하게 쓴다(배경/구도/메인 오브제/보조 요소/질감/조명/여백 순으로 구체적으로).
+- 여러 문단으로 충분히 상세하게 쓴다(배경/구도/메인 오브제/보조 요소/질감/조명/여백 순으로 구체적으로).`
 
-[텍스트 처리 — 매우 중요]
+// 배경만 (텍스트 미표출)
+const TEXT_BG = `[텍스트 처리 — 매우 중요]
 - 이 이미지는 "카피(타이틀/문구)를 나중에 따로 얹는" 배경·무드 비주얼이다. 어떤 글자도 이미지 안에 넣지 않는다.
 - 타이틀/서브문구는 분위기 참고 및 여백 배치 힌트로만 쓰고, 그 문구 자체를 이미지에 렌더링하지 않는다.
 - 장식용 텍스트·아이콘·화살표·워터마크·숫자·해시태그도 넣지 않는다.
-- 대신 카피가 얹힐 "깨끗하고 넓은 여백 구역"을 의도적으로 확보한다(아래 포맷 지침의 여백 위치를 따른다).
+- 대신 카피가 얹힐 "깨끗하고 넓은 여백 구역"을 의도적으로 확보한다(아래 포맷 지침의 여백 위치를 따른다).`
 
-[브랜드·제품 처리 — 매우 중요]
+// 텍스트 포함 (타이틀/서브 표출)
+const TEXT_BAKE = `[텍스트 표출 — 매우 중요]
+- 이 이미지에는 사용자가 지정한 타이틀(및 서브 문구)을 "이미지 안에 정확한 한글 타이포그래피로" 그려 넣는다.
+- 타이틀은 굵고 크게, 서브 문구는 그보다 작게 배치한다. 가독성을 위해 텍스트 뒤에 반투명 스크림이나 충분한 여백을 두고, 브랜드 톤에 맞는 세련된 서체로 표현한다.
+- 지정된 문구의 철자·띄어쓰기를 100% 그대로 유지한다. 왜곡되거나 깨진 글자, 없는 글자, 오타, 무의미한 기호로 대체하지 않는다. 정확도를 높이기 위해, 출력 프롬프트 본문 안에서 해당 문구를 큰따옴표로 감싸 2회 이상 똑같이 반복해 명시한다.
+- 지정된 문구 외의 임의 텍스트·문장·워터마크·해시태그는 넣지 않는다(사용자가 문구에 포함하지 않은 숫자·아이콘도 넣지 않는다).
+- 문구는 짧고 명확할수록 정확히 렌더링된다. 긴 문장이면 의미를 해치지 않는 선에서 간결하게 배치한다.`
+
+const BRAND = `[브랜드·제품 처리 — 매우 중요]
 - 컨셉/상품 구성에 특정 브랜드나 기성 제품명(예: 서울우유, 포카리스웨트, 나이키 에어포스, 아디다스 가젤 등)이 있으면, 그 브랜드/제품을 실제 패키지·라벨·형태 그대로 사실적으로 묘사하고, 프롬프트에 브랜드/제품 이름을 그대로 유지한다. 일반 제품으로 뭉개거나 상표를 지우지 말 것.
-- 위의 "텍스트·로고 금지"는 카피와 장식 요소에만 적용되며, 실제 상품 패키지에 원래 존재하는 브랜드 로고·제품명은 예외로 그대로 살린다.
+- 위의 텍스트 규칙(카피·장식 처리)은 실제 상품 패키지에 원래 존재하는 브랜드 로고·제품명에는 적용하지 않는다 — 그 브랜딩은 예외로 그대로 살린다.`
 
-[브랜드 톤]
+const TONE = `[브랜드 톤]
 - 큐마켓 SNS 특유의 밝고 친근한 무드: 따뜻한 웜톤, 자연광, 가정식/홈쿠킹 감성. 과하게 스튜디오틱하거나 번쩍이는 상업 광고 느낌은 피한다.
 - 오렌지(#ff4800 계열) 포인트 컬러가 은은하게 어울리는 깨끗하고 트렌디한 색감으로 정돈한다.`
 
 const FORMAT_FEED = `[포맷 — 피드 1:1 정사각]
-- 정확히 1:1 정사각 구도. 메인 오브제를 화면 중앙~하단에 안정적으로 배치하고, 상단(또는 한쪽)에 카피가 얹힐 넓고 깨끗한 여백을 크게 확보한다.
+- 정확히 1:1 정사각 구도. 메인 오브제를 화면 중앙~하단에 안정적으로 배치하고, 상단(또는 한쪽)에 카피가 놓일 넓고 깨끗한 여백을 크게 확보한다.
 - 톱다운 플랫레이 또는 45도 앵글의 음식/제품 연출. 시선이 메인에 자연스럽게 모이도록 정돈하고, 요소가 많아 어수선해지지 않게 한다.`
 
 const FORMAT_REELS = `[포맷 — 릴스·스토리 9:16 세로]
-- 세로로 길쭉한 9:16 구도. 인스타그램 UI가 상단 약 1/4과 하단 일부를 가리므로, 핵심 오브제는 화면 중앙~중하단에 배치한다.
-- 상단과 하단에는 카피/버튼이 얹힐 여백을 넉넉히 남기고, 세로 흐름이 시원하게 느껴지는 배경으로 구성한다.`
+- 세로로 길쭉한 9:16 구도. 인스타그램 UI가 상단 약 1/4과 하단 일부를 가리므로, 핵심 오브제와 카피는 화면 중앙~중하단에 배치한다.
+- 상단과 하단에는 카피/버튼이 놓일 여백을 넉넉히 남기고, 세로 흐름이 시원하게 느껴지는 배경으로 구성한다.`
 
 const STYLE_REALISTIC = `[스타일 — 실사]
 - 실사 사진. 자연광이 부드럽게 스며드는 홈쿠킹/가정식 무드의 웜톤. 재료·제품의 질감(윤기, 표면, 색감)이 먹음직스럽고 세련되게 보이도록 한다.
@@ -58,24 +74,26 @@ const STYLE_BLENDER = `[스타일 — 블렌더 3D]
 - 2026 감성의 트렌디한 Blender 스타일 3D 렌더. 세미 매트~무광 재질, 과하게 말랑한 클레이 토이 느낌은 지양한다.
 - 색상은 경쾌하고 다양하게, 조명은 부드러운 스튜디오 조명으로. 전체를 하나의 통일된 3D 렌더로 완성한다.`
 
-export function systemPromptFor({ format = 'feed', version = 'realistic' } = {}) {
+export function systemPromptFor({ format = 'feed', version = 'realistic', textMode = 'bg' } = {}) {
+  const textBlock = textMode === 'text' ? TEXT_BAKE : TEXT_BG
   const fmt = format === 'reels' ? FORMAT_REELS : FORMAT_FEED
   const style = version === 'blender3d' ? STYLE_BLENDER : STYLE_REALISTIC
-  return `${COMMON}\n\n${fmt}\n\n${style}`
+  return `${HEAD}\n\n${textBlock}\n\n${BRAND}\n\n${TONE}\n\n${fmt}\n\n${style}`
 }
 
-export function buildSnsMessages({ format = 'feed', version = 'realistic', topic = 'free', brief, refCount = 0 }) {
+export function buildSnsMessages({ format = 'feed', version = 'realistic', topic = 'free', brief, refCount = 0, textMode = 'bg' }) {
   const fmtObj = SNS_FORMATS.find((f) => f.value === format) || SNS_FORMATS[0]
   const topicObj = SNS_TOPICS.find((t) => t.value === topic)
   const b = brief || {}
+  const bake = textMode === 'text'
 
   const lines = []
   lines.push(`포맷: ${fmtObj.label}`)
   if (topicObj && topic !== 'free') {
     lines.push(`콘텐츠 주제: ${topicObj.label}${topicObj.hint ? ` (${topicObj.hint})` : ''}`)
   }
-  if (b.title) lines.push(`타이틀(분위기 참고, 이미지에 넣지 말 것): ${b.title}`)
-  if (b.subtitle) lines.push(`서브 문구(분위기 참고, 이미지에 넣지 말 것): ${b.subtitle}`)
+  if (b.title) lines.push(`${bake ? '타이틀(이미지에 크게 표시할 문구)' : '타이틀(분위기 참고, 이미지에 넣지 말 것)'}: ${b.title}`)
+  if (b.subtitle) lines.push(`${bake ? '서브 문구(이미지에 작게 표시할 문구)' : '서브 문구(분위기 참고, 이미지에 넣지 말 것)'}: ${b.subtitle}`)
   if (b.concept) lines.push(`컨셉 / 상품 구성: ${b.concept}`)
   const briefText = lines.join('\n')
 
@@ -88,14 +106,28 @@ export function buildSnsMessages({ format = 'feed', version = 'realistic', topic
 - 첨부된 상품이 장면의 메인/핵심 오브제가 되도록 하고, 프롬프트에 "첨부된 참조 상품의 실제 외형·패키지·로고를 그대로 사용" 취지를 명시한다.`
       : ''
 
-  const user = `아래 브리프로, 규칙을 지키는 큐마켓 SNS ${fmtObj.label} 메인 비주얼용 이미지 생성 프롬프트 1개를 한국어로 작성해줘.
+  let closing
+  if (bake) {
+    const textList = []
+    if (b.title) textList.push(`- 타이틀(크게): "${b.title}"`)
+    if (b.subtitle) textList.push(`- 서브 문구(작게): "${b.subtitle}"`)
+    closing = textList.length
+      ? `이 이미지에는 아래 문구를 "이미지 안에 정확한 한글로" 넣어야 한다:
+${textList.join('\n')}
+철자·띄어쓰기를 그대로 유지하고, 출력 프롬프트 안에서 각 문구를 큰따옴표로 감싸 2회 이상 정확히 반복해 명시할 것. 깨진 글자·오타·없는 글자가 생기지 않게 하고, 지정한 문구 외의 임의 텍스트·워터마크는 넣지 말 것. 단, 컨셉·첨부의 실제 상품 브랜드·제품명·패키지는 그대로 살릴 것. 프롬프트 본문만 출력.`
+      : `표시할 타이틀/서브 문구가 없으므로 이미지에 텍스트를 넣지 말고 컨셉·상품 위주로 구성할 것. 단, 실제 상품 브랜드·제품명·패키지는 그대로 살릴 것. 프롬프트 본문만 출력.`
+  } else {
+    closing = `다시 강조: 카피/타이틀/서브문구 "글자"는 이미지에 절대 넣지 말고, 카피가 얹힐 깨끗한 여백을 확보할 것. 단, 컨셉이나 첨부 이미지의 실제 상품 브랜드·제품명·패키지·로고는 그대로 살릴 것. 프롬프트 본문만 출력.`
+  }
+
+  const user = `아래 브리프로, 규칙을 지키는 큐마켓 SNS ${fmtObj.label} 메인 ${bake ? '이미지' : '비주얼'}용 이미지 생성 프롬프트 1개를 한국어로 작성해줘.
 
 ${briefText}${refNote}
 
-다시 강조: 카피/타이틀/서브문구 "글자"는 이미지에 절대 넣지 말고, 카피가 얹힐 깨끗한 여백을 확보할 것. 단, 컨셉이나 첨부 이미지의 실제 상품 브랜드·제품명·패키지·로고는 그대로 살릴 것. 프롬프트 본문만 출력.`
+${closing}`
 
   return [
-    { role: 'system', content: systemPromptFor({ format, version }) },
+    { role: 'system', content: systemPromptFor({ format, version, textMode }) },
     { role: 'user', content: user },
   ]
 }

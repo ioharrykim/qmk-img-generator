@@ -95,7 +95,7 @@ function loadPresets() {
 }
 
 const DEFAULT_QMARKET = { enabled: false, version: 'realistic', title: '', subtitle: '', concept: '' }
-const DEFAULT_SNS = { enabled: false, format: 'feed', version: 'realistic', topic: 'free', title: '', subtitle: '', concept: '' }
+const DEFAULT_SNS = { enabled: false, format: 'feed', version: 'realistic', topic: 'free', textMode: 'bg', title: '', subtitle: '', concept: '' }
 
 function loadQmarket() {
   try {
@@ -495,6 +495,7 @@ export default function App() {
         format: sns.format,
         version: sns.version,
         topic: sns.topic,
+        textMode: sns.textMode,
         brief,
         refCount: references.length,
       })
