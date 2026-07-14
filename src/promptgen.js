@@ -1,4 +1,4 @@
-// AI 고급 프롬프트 생성 (큐마켓 상세페이지)
+// AI 고급 프롬프트 생성 (큐마켓 상세페이지 / SNS)
 // 모드별 경로:
 //  - 팀(Supabase): /api/prompt 로 (로그인 토큰 포함) → 함수가 OpenAI 호출
 //  - 자체서버(proxy): /api/prompt 로 (Express 서버가 키 보유)
@@ -7,6 +7,7 @@
 import { API_MODE, API_BASE, SUPABASE_ENABLED } from './config'
 import { supabase } from './supabase'
 import { buildQmarketMessages } from './qmarketPrompts'
+import { buildSnsMessages } from './snsPrompts'
 
 const OPENAI_CHAT = 'https://api.openai.com/v1/chat/completions'
 
@@ -21,8 +22,8 @@ async function readJsonResponse(res, label) {
   }
 }
 
-export async function generateDetailPrompt({ apiKey, model, version, brief, refCount = 0 }) {
-  const messages = buildQmarketMessages({ version, brief, refCount })
+// 공용 chat/completions 호출 (프록시·팀·직접 모드 분기)
+async function runChat({ apiKey, model, messages }) {
   const useModel = model || 'gpt-5.5'
 
   if (API_MODE === 'proxy') {
@@ -67,4 +68,14 @@ export async function generateDetailPrompt({ apiKey, model, version, brief, refC
   if (!res.ok || json.error) throw new Error((json && json.error && json.error.message) || '프롬프트 생성 실패 (' + res.status + ')')
   const text = (json.choices && json.choices[0] && json.choices[0].message && json.choices[0].message.content) || ''
   return { text: text.trim(), usage: json.usage, model: useModel }
+}
+
+// 큐마켓 상세페이지 프롬프트
+export function generateDetailPrompt({ apiKey, model, version, brief, refCount = 0 }) {
+  return runChat({ apiKey, model, messages: buildQmarketMessages({ version, brief, refCount }) })
+}
+
+// 큐마켓 SNS 이미지 프롬프트 (텍스트 없는 배경/무드 비주얼)
+export function generateSnsPrompt({ apiKey, model, format, version, topic, brief, refCount = 0 }) {
+  return runChat({ apiKey, model, messages: buildSnsMessages({ format, version, topic, brief, refCount }) })
 }

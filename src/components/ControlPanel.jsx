@@ -2,6 +2,7 @@ import SegmentedControl from './SegmentedControl'
 import ReferenceImages from './ReferenceImages'
 import StylePresets from './StylePresets'
 import QmarketDetailPanel from './QmarketDetailPanel'
+import SnsPanel from './SnsPanel'
 import TypographyPanel from './TypographyPanel'
 import { formatKrw, formatUsd } from '../pricing'
 import {
@@ -50,6 +51,10 @@ export default function ControlPanel({
   onToggleTypography,
   onTypographyChange,
   onApplyTypography,
+  sns,
+  onToggleSns,
+  onSnsChange,
+  onGenerateSns,
   generationEstimate,
 }) {
   const showCompression = settings.format === 'jpeg' || settings.format === 'webp'
@@ -93,6 +98,15 @@ export default function ControlPanel({
           onToggle={onToggleQmarket}
           onChange={onQmarketChange}
           onGenerate={onGeneratePrompt}
+          generating={generatingPrompt}
+        />
+
+        {/* 큐마켓 SNS 이미지 전용 모드 */}
+        <SnsPanel
+          sns={sns}
+          onToggle={onToggleSns}
+          onChange={onSnsChange}
+          onGenerate={onGenerateSns}
           generating={generatingPrompt}
         />
 
