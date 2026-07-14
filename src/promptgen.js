@@ -75,7 +75,7 @@ export function generateDetailPrompt({ apiKey, model, version, brief, refCount =
   return runChat({ apiKey, model, messages: buildQmarketMessages({ version, brief, refCount }) })
 }
 
-// 큐마켓 SNS 이미지 프롬프트 (텍스트 없는 배경/무드 비주얼)
-export function generateSnsPrompt({ apiKey, model, format, version, topic, brief, refCount = 0 }) {
-  return runChat({ apiKey, model, messages: buildSnsMessages({ format, version, topic, brief, refCount }) })
+// 큐마켓 SNS 이미지 프롬프트 (배경만 / 텍스트 포함 — textMode)
+export function generateSnsPrompt({ apiKey, model, format, version, topic, brief, refCount = 0, textMode = 'bg' }) {
+  return runChat({ apiKey, model, messages: buildSnsMessages({ format, version, topic, brief, refCount, textMode }) })
 }
